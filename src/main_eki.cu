@@ -265,7 +265,7 @@ int main(int argc, char** argv) {
 
     // Load nuclide decay chain configuration
     NuclideConfig* nucConfig = NuclideConfig::getInstance();
-    std::string nuclide_config_file = "./input/nuclides_config_1.txt";
+    std::string nuclide_config_file = "./cram/nuclides_config_single.txt";
 
     if (!nucConfig->loadFromFile(nuclide_config_file)) {
         std::cerr << Color::RED << "[ERROR] Failed to load nuclide configuration"
@@ -920,6 +920,20 @@ int main(int argc, char** argv) {
     } else {
         std::cout << Color::YELLOW << " skipped (script not found)\n" << Color::RESET;
     }
+
+    // ========================================================================
+    // Optional: Detailed Post-Processing
+    // ========================================================================
+    std::cout << "\n" << Color::CYAN << "[INFO] " << Color::RESET
+              << "For detailed analysis and individual plots, run:" << std::endl;
+    std::cout << "  " << Color::BOLD << "python3 util/detailed_postprocess.py"
+              << Color::RESET << std::endl;
+    std::cout << "  This generates:" << std::endl;
+    std::cout << "    - Individual plots for each receptor" << std::endl;
+    std::cout << "    - Debug data extraction from NPZ archive" << std::endl;
+    std::cout << "    - Input configuration summary" << std::endl;
+    std::cout << "  Output: " << Color::BOLD << "output/detailed_analysis/"
+              << Color::RESET << "\n" << std::endl;
 
     return 0;
 }

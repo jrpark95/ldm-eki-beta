@@ -457,3 +457,4 @@ CUDA 커널 에러를 자동으로 수집하여 시뮬레이션 종료 시 일�
   - 모든 config 파일의 핵심 값만 추출
   - Markdown 형식의 간결한 요약 생성
 - 사용법: `python3 util/detailed_postprocess.py`
+- 자동 안내: 시뮬레이션 종료 시 자동으로 실행 방법 안내 메시지 출력
