@@ -661,7 +661,7 @@ void LDM::runSimulation_eki(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[3A");  // Move up 3 lines (only affects terminal, ignored in log file)
+                fprintf(stderr, "\033[4A");  // Move up 4 lines (only affects terminal, ignored in log file)
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
@@ -676,6 +676,7 @@ void LDM::runSimulation_eki(){
                    past_meteo_index,
                    (future_meteo_index < g_eki_meteo.num_time_steps) ? future_meteo_index : past_meteo_index,
                    t0);
+            fprintf(stderr, "\r-------------------------------------------------\033[K\n");
             fflush(stderr);
 
             first_time = false;
@@ -1092,7 +1093,7 @@ void LDM::runSimulation_eki_dump(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[3A");  // Move up 3 lines (only affects terminal, ignored in log file)
+                fprintf(stderr, "\033[4A");  // Move up 4 lines (only affects terminal, ignored in log file)
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
@@ -1107,6 +1108,7 @@ void LDM::runSimulation_eki_dump(){
                    past_meteo_index,
                    (future_meteo_index < g_eki_meteo.num_time_steps) ? future_meteo_index : past_meteo_index,
                    t0);
+            fprintf(stderr, "\r-------------------------------------------------\033[K\n");
             fflush(stderr);
 
             first_time = false;
