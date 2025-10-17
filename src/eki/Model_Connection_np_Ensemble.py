@@ -1,7 +1,7 @@
 import numpy as np
 from copy import deepcopy
 
-from eki_ipc_reader import receive_gamma_dose_matrix_shm, EKIIPCReader, read_eki_full_config_shm
+from eki_ipc_reader import receive_gamma_dose_matrix_shm, EKIIPCReader, read_eki_full_config_shm, read_true_emissions_shm
 from memory_doctor import memory_doctor
 
 # Color output support
@@ -23,7 +23,10 @@ def load_config_from_shared_memory():
     # Read full configuration from shared memory
     shm_data = read_eki_full_config_shm()
 
-   
+    # Read true emissions from separate shared memory segment
+    true_emissions = read_true_emissions_shm()
+    print(f"{Fore.CYAN}[IPC]{Style.RESET_ALL} True emissions loaded: {len(true_emissions)} timesteps")
+
     memory_doctor_value = shm_data['memory_doctor'].strip()
 
     if memory_doctor_value.lower() in ['on', '1', 'true']:
@@ -100,39 +103,34 @@ def load_config_from_shared_memory():
 
         # Source_1 (true emission source for reference simulation)
         # Format: [decay_constant, DCF, [x,y,z], [emission_series], 0.0, 0.0, 'nuclide']
-        # TODO: Read from shared memory when C++ sends:
-        #   - decay_constant (currently hardcoded Kr-88: 6.779608573551890e-05)
-        #   - dose_conversion_factor (currently hardcoded: 1.02e-13)
-        #   - source_location (currently hardcoded: [10.0, 10.0, 10.0])
-        #   - true_emissions array (CRITICAL: currently hardcoded 24 values)
-        #   - nuclide_name (currently hardcoded: 'Kr-88')
+        # Values now read from shared memory (no hardcoded values)
         'Source_1': [
-            6.779608573551890e-05,  # Kr-88 decay constant (TODO: read from SHM)
-            1.02e-13,                # Dose conversion factor (TODO: read from SHM)
-            [10.0, 10.0, 10.0],      # Source location (TODO: read from SHM)
-            # TODO: Replace with shm_data['true_emissions'] when available
-            [1.0e+12] * shm_data['num_timesteps'],  # Placeholder: constant emission
-            0.0e-0,                  # Reserved field
-            0.0e-0,                  # Reserved field
-            'Kr-88'                  # Nuclide name (TODO: read from SHM)
+            shm_data['decay_constant'],  # Decay constant λ [s⁻¹] from nuclides.conf
+            1.02e-13,                    # Dose conversion factor (unused by LDM, kept for compatibility)
+            [10.0, 10.0, 10.0],          # Source location (unused by LDM - uses source.conf)
+            true_emissions.tolist(),     # True emission time series from eki.conf
+            0.0e-0,                      # Reserved field
+            0.0e-0,                      # Reserved field
+            'Kr-88'                      # Nuclide name (fixed to Kr-88 for v1.0)
         ],
 
         # Prior_Source_1 (initial guess for inversion)
         # Format: [decay_constant, DCF, [[x,y,z],[std]], [[emission_series],[std]], 'nuclide']
+        # Values now read from shared memory (no hardcoded values)
         'Prior_Source_1': [
-            6.779608573551890e-05,  # Kr-88 decay constant (TODO: read from SHM)
-            1.02e-13,                # Dose conversion factor (TODO: read from SHM)
-            [[10.0, 10.0, 100.0], [0.1]],  # Location and std (TODO: read from SHM)
+            shm_data['decay_constant'],  # Decay constant λ [s⁻¹] from nuclides.conf
+            1.02e-13,                    # Dose conversion factor (unused by LDM, kept for compatibility)
+            [[10.0, 10.0, 100.0], [0.1]],  # Location and std (unused by LDM - uses source.conf)
             # Prior emission: constant value with noise
             [[shm_data['prior_constant']] * shm_data['num_timesteps'], [shm_data['noise_level']]],
-            'Kr-88'                  # Nuclide name (TODO: read from SHM)
+            'Kr-88'                      # Nuclide name (fixed to Kr-88 for v1.0)
         ],
 
-        # Prior source bounds (TODO: read from shared memory)
-        'prior_source1': [1.0e+14, 1.0e+13, 6.77960857355189e-05],  # Kr-88
+        # Prior source bounds (now read from shared memory)
+        'prior_source1': [1.0e+14, 1.0e+13, shm_data['decay_constant']],
 
-        # Emission boundary for optimization (TODO: read from shared memory)
-        'real_source1_boundary': [0.0, 1.0e+14],  # Kr-88
+        # Emission boundary for optimization (kept as constants for v1.0)
+        'real_source1_boundary': [0.0, 1.0e+14],
     }
 
     print(f"{Fore.GREEN}✓{Style.RESET_ALL} Configuration loaded:")

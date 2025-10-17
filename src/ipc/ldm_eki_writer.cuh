@@ -23,6 +23,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 #include "colors.h"
 
 // Forward declarations
@@ -44,6 +45,7 @@ constexpr const char* SHM_CONFIG_NAME = "/ldm_eki_config";
 constexpr const char* SHM_DATA_NAME = "/ldm_eki_data";
 constexpr const char* SHM_ENSEMBLE_OBS_CONFIG_NAME = "/ldm_eki_ensemble_obs_config";
 constexpr const char* SHM_ENSEMBLE_OBS_DATA_NAME = "/ldm_eki_ensemble_obs_data";
+constexpr const char* SHM_TRUE_EMISSIONS_NAME = "/ldm_eki_true_emissions";
 
 /// @}
 
@@ -65,22 +67,25 @@ struct EKIConfigBasic {
 
 ////////////////////////////////////////////////////////////////////////////////
 /// @struct EKIConfigFull
-/// @brief  Complete EKI configuration (80 bytes)
+/// @brief  Complete EKI configuration (84 bytes)
 /// @details Full configuration including all algorithm parameters, options,
 ///          and metadata needed by the Python EKI optimization process.
 ///
 /// Memory Layout (v1.0 Release - Simplified):
 /// - Bytes 0-11  : Basic dimensions (12 bytes)
-/// - Bytes 12-31 : Algorithm parameters (20 bytes)
-/// - Bytes 32-71 : Option strings (40 bytes = 5 strings × 8 bytes)
-/// - Bytes 72-79 : Memory Doctor mode (8 bytes)
+/// - Bytes 12-35 : Algorithm parameters (24 bytes)
+/// - Bytes 36-75 : Option strings (40 bytes = 5 strings × 8 bytes)
+/// - Bytes 76-83 : Memory Doctor mode (8 bytes)
+///
+/// Separate shared memory segments:
+/// - /dev/shm/ldm_eki_true_emissions: True emission time series [num_timesteps × float]
 ///
 /// Hardcoded values (not in IPC structure):
 /// - GPU acceleration: Always enabled (CUDA for forward, CuPy for inverse)
 /// - Source location: Always "Fixed" (known position)
 /// - Number of sources: Always 1 (single source only)
 ///
-/// @note Total size is 80 bytes (reduced from 128 bytes)
+/// @note Total size is 84 bytes (was 80 bytes before decay_constant added)
 /// @note All strings are null-terminated with max length 7 chars + null
 /// @note Deprecated fields removed: time_days, inverse_time_interval,
 ///       receptor_error, receptor_mda, num_source, num_gpu, gpu_forward,
@@ -92,12 +97,13 @@ struct EKIConfigFull {
     int32_t num_receptors;
     int32_t num_timesteps;
 
-    // Algorithm parameters (20 bytes)
+    // Algorithm parameters (24 bytes)
     int32_t iteration;               ///< Maximum EKI iterations (e.g., 10)
     float renkf_lambda;              ///< REnKF regularization parameter
     float noise_level;               ///< Observation noise level
     float time_interval;             ///< EKI time interval (e.g., 15.0 minutes)
     float prior_constant;            ///< Prior emission constant (e.g., 1.5e+8 Bq)
+    float decay_constant;            ///< Nuclide decay constant λ [s⁻¹] (e.g., Kr-88: 6.78e-5)
 
     // Option strings (40 bytes = 5 strings × 8 bytes)
     char perturb_option[8];    ///< Perturbation option: "On"/"Off"
@@ -109,7 +115,10 @@ struct EKIConfigFull {
     // Memory Doctor Mode (8 bytes)
     char memory_doctor[8];     ///< Debug mode: "On"/"Off"
 
-    // Total: 12 + 20 + 40 + 8 = 80 bytes (no padding needed)
+    // Total: 12 + 24 + 40 + 8 = 84 bytes (no padding needed)
+
+    // Note: true_emissions array sent via separate shared memory segment
+    // (/dev/shm/ldm_eki_true_emissions) to avoid fixed-size allocation
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -372,6 +381,48 @@ public:
     ////////////////////////////////////////////////////////////////////////////////
     bool writeEnsembleObservations(const float* observations, int ensemble_size,
                                    int num_receptors, int num_timesteps, int iteration = -1);
+
+    /// @}
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /// @name True Emissions Transfer
+    /// @{
+    ////////////////////////////////////////////////////////////////////////////////
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /// @brief Write true emission time series to shared memory
+    ///
+    /// @details
+    /// Transfers the true emission time series from C++ to Python via a
+    /// separate shared memory segment. This array is read from eki.conf
+    /// and must be passed to Python for the EKI optimization.
+    ///
+    /// Data Layout:
+    /// - [emission_time_0, emission_time_1, ..., emission_time_T]
+    ///
+    /// Segment:
+    /// - `/dev/shm/ldm_eki_true_emissions`
+    ///
+    /// Size: num_timesteps × sizeof(float)
+    ///
+    /// @param[in] emissions      True emission time series array
+    /// @param[in] num_timesteps  Number of timesteps (array length)
+    ///
+    /// @return true if write successful, false on any error
+    ///
+    /// @pre initialize() must have been called
+    /// @post Data written to /dev/shm/ldm_eki_true_emissions
+    /// @post Statistics logged to console
+    ///
+    /// @note Creates new segment each call (O_TRUNC flag)
+    /// @note Python expected to read data after this call
+    ///
+    /// @par Output:
+    /// Prints data size and statistics (range, sum) to console
+    ///
+    /// @performance Typical transfer: < 1 KB in < 1ms
+    ////////////////////////////////////////////////////////////////////////////////
+    bool writeTrueEmissions(const std::vector<float>& emissions);
 
     /// @}
 

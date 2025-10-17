@@ -359,6 +359,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Write true emissions time series to shared memory
+    if (!eki_writer.writeTrueEmissions(eki_config.true_emissions)) {
+        std::cerr << Color::RED << "[ERROR] Failed to write true emissions to shared memory"
+                  << Color::RESET << std::endl;
+        return 1;
+    }
+
     ldm.startTimer();
 
     // Initialize EKI observation system for single mode

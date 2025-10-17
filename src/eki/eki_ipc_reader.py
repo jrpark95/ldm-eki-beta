@@ -210,16 +210,19 @@ def receive_gamma_dose_matrix_shm() -> np.ndarray:
 
 def read_eki_full_config_shm() -> dict:
     """
-    Read full EKI configuration from shared memory (80 bytes).
+    Read full EKI configuration from shared memory (84 bytes).
 
     This function reads the extended configuration structure that includes
     all Python EKI parameters, not just the basic 3 integers.
 
-    Structure (v1.0 Release - Simplified):
+    Structure (v1.0 Release - With decay_constant):
     - Bytes 0-11  : Basic dimensions (12 bytes)
-    - Bytes 12-31 : Algorithm parameters (20 bytes)
-    - Bytes 32-71 : Option strings (40 bytes = 5 strings × 8 bytes)
-    - Bytes 72-79 : Memory Doctor mode (8 bytes)
+    - Bytes 12-35 : Algorithm parameters (24 bytes: 1 int32 + 5 float32)
+    - Bytes 36-75 : Option strings (40 bytes = 5 strings × 8 bytes)
+    - Bytes 76-83 : Memory Doctor mode (8 bytes)
+
+    Separate shared memory segments:
+    - /dev/shm/ldm_eki_true_emissions: True emission time series (num_timesteps × float32)
 
     Returns:
         dict: Dictionary with all configuration parameters
@@ -232,37 +235,37 @@ def read_eki_full_config_shm() -> dict:
 
     try:
         with open(config_path, 'rb') as f:
-            # Read full config structure (80 bytes)
-            data = f.read(80)
-            if len(data) < 80:  # Minimum 80 bytes for actual data
-                raise RuntimeError(f"Invalid full config data size: {len(data)} bytes (expected 80)")
+            # Read full config structure (84 bytes)
+            data = f.read(84)
+            if len(data) < 84:  # Minimum 84 bytes for actual data
+                raise RuntimeError(f"Invalid full config data size: {len(data)} bytes (expected 84)")
 
             # Unpack structure (little-endian):
             # Basic info (12 bytes): 3 int32
-            # Algorithm params (20 bytes): 1 int32 + 4 float32
+            # Algorithm params (24 bytes): 1 int32 + 5 float32
             # Strings (40 bytes): 5 char[8]
             # Memory Doctor (8 bytes): 1 char[8]
-            # Total: 12 + 20 + 40 + 8 = 80 bytes
+            # Total: 12 + 24 + 40 + 8 = 84 bytes
 
             # Basic info (12 bytes)
             ensemble_size, num_receptors, num_timesteps = struct.unpack_from('<3i', data, 0)
 
-            # Algorithm parameters (20 bytes starting at offset 12)
+            # Algorithm parameters (24 bytes starting at offset 12)
             offset = 12
             iteration, = struct.unpack_from('<i', data, offset)
             offset += 4
-            renkf_lambda, noise_level, time_interval, prior_constant = struct.unpack_from('<4f', data, offset)
-            offset += 16  # Now at 32 bytes
+            renkf_lambda, noise_level, time_interval, prior_constant, decay_constant = struct.unpack_from('<5f', data, offset)
+            offset += 20  # Now at 36 bytes
 
-            # Option strings (40 bytes = 5 × 8 bytes, starting at offset 32)
-            perturb_option = data[32:40].decode('utf-8').rstrip('\x00')
-            adaptive_eki = data[40:48].decode('utf-8').rstrip('\x00')
-            localized_eki = data[48:56].decode('utf-8').rstrip('\x00')
-            regularization = data[56:64].decode('utf-8').rstrip('\x00')
-            time_unit = data[64:72].decode('utf-8').rstrip('\x00')
+            # Option strings (40 bytes = 5 × 8 bytes, starting at offset 36)
+            perturb_option = data[36:44].decode('utf-8').rstrip('\x00')
+            adaptive_eki = data[44:52].decode('utf-8').rstrip('\x00')
+            localized_eki = data[52:60].decode('utf-8').rstrip('\x00')
+            regularization = data[60:68].decode('utf-8').rstrip('\x00')
+            time_unit = data[68:76].decode('utf-8').rstrip('\x00')
 
-            # Memory Doctor Mode (8 bytes, starting at offset 72)
-            memory_doctor = data[72:80].decode('utf-8').rstrip('\x00')
+            # Memory Doctor Mode (8 bytes, starting at offset 76)
+            memory_doctor = data[76:84].decode('utf-8').rstrip('\x00')
 
             config_dict = {
                 # Basic
@@ -276,6 +279,7 @@ def read_eki_full_config_shm() -> dict:
                 'noise_level': noise_level,
                 'time_interval': time_interval,
                 'prior_constant': prior_constant,  # Prior emission constant value
+                'decay_constant': decay_constant,  # Nuclide decay constant λ [s⁻¹]
 
                 # Options
                 'perturb_option': perturb_option,
@@ -297,6 +301,71 @@ def read_eki_full_config_shm() -> dict:
 
     except OSError as e:
         raise OSError(f"Failed to read full config shared memory: {e}")
+
+
+def read_true_emissions_shm() -> np.ndarray:
+    """
+    Read true emission time series from shared memory.
+
+    This function reads the true emission array that was written by C++
+    from eki.conf. The array size is determined dynamically from the file size.
+
+    Shared memory segment:
+        /dev/shm/ldm_eki_true_emissions
+
+    Returns
+    -------
+    ndarray
+        1D array of true emission values [Bq] for each timestep
+        Shape: (num_timesteps,)
+
+    Raises
+    ------
+    FileNotFoundError
+        If shared memory file doesn't exist
+    OSError
+        If file cannot be read
+    RuntimeError
+        If file size is not a multiple of 4 (float32 size)
+
+    Notes
+    -----
+    **Binary Format:**
+    - Little-endian float32 values
+    - Size: num_timesteps × 4 bytes
+    - Memory layout: [emission_t0, emission_t1, ..., emission_tN]
+
+    **Example:**
+    For 24 timesteps with constant emission 1.0e+12 Bq:
+    - File size: 96 bytes (24 × 4)
+    - Values: [1.0e+12, 1.0e+12, ..., 1.0e+12]
+    """
+    emissions_path = "/dev/shm/ldm_eki_true_emissions"
+
+    try:
+        with open(emissions_path, 'rb') as f:
+            # Read entire file
+            data = f.read()
+
+            # Verify size is multiple of float32
+            if len(data) % 4 != 0:
+                raise RuntimeError(f"Invalid true emissions data size: {len(data)} bytes (not a multiple of 4)")
+
+            # Convert to numpy array
+            emissions = np.frombuffer(data, dtype=np.float32)
+
+            # Memory Doctor: Log received true emissions
+            if memory_doctor.is_enabled():
+                memory_doctor.log_received_data("true_emissions", emissions, 0,
+                                               f"LDM->Python true emissions (length={len(emissions)})")
+
+            return emissions
+
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"True emissions shared memory not found: {emissions_path}\n"
+                               f"  → Check if LDM has written true emissions to shared memory") from e
+    except OSError as e:
+        raise OSError(f"Failed to read true emissions shared memory: {e}") from e
 
 
 if __name__ == "__main__":

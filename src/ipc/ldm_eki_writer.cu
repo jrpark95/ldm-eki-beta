@@ -11,6 +11,7 @@
 
 #include "ldm_eki_writer.cuh"
 #include "../core/ldm.cuh"  // For EKIConfig definition
+#include "../physics/ldm_nuclides.cuh"  // For decay constant retrieval
 #include "../debug/memory_doctor.cuh"
 #include <errno.h>
 
@@ -101,6 +102,12 @@ bool EKIWriter::initialize(const ::EKIConfig& eki_config, int num_timesteps) {
     config->noise_level = eki_config.noise_level;
     config->time_interval = eki_config.time_interval;
     config->prior_constant = eki_config.prior_constant;
+
+    // Nuclide decay constant (from nuclides.conf, read by NuclideConfig)
+    // Get first nuclide's decay constant (single-nuclide mode)
+    NuclideConfig* nuc_config = NuclideConfig::getInstance();
+    config->decay_constant = (nuc_config->getNumNuclides() > 0) ?
+                             nuc_config->getDecayConstant(0) : 0.0f;
 
     // Option strings (safe copy with null termination)
     memset(config->perturb_option, 0, 8);
@@ -381,6 +388,95 @@ bool EKIWriter::writeEnsembleObservations(const float* observations, int ensembl
     // Unmap data
     munmap(ens_obs_data_map, ens_obs_data_size);
     close(ens_obs_data_fd);
+
+    return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// True Emissions Transfer
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+/// @brief Write true emission time series to shared memory
+///
+/// @details
+/// Writes the true emission time series array from eki.conf to a separate
+/// shared memory segment for Python EKI to read. This avoids hardcoding
+/// emission values in Python and ensures config file is the single source
+/// of truth.
+///
+/// @param[in] emissions      True emission time series (from g_eki.true_emissions)
+///
+/// @return true if write successful, false on error
+///
+/// @post /dev/shm/ldm_eki_true_emissions created/truncated and written
+////////////////////////////////////////////////////////////////////////////////
+bool EKIWriter::writeTrueEmissions(const std::vector<float>& emissions) {
+    if (!initialized) {
+        std::cerr << "EKIWriter not initialized" << std::endl;
+        return false;
+    }
+
+    if (emissions.empty()) {
+        std::cerr << "Cannot write empty true emissions array" << std::endl;
+        return false;
+    }
+
+    // Calculate data size
+    size_t emissions_size = emissions.size() * sizeof(float);
+
+    // Create/open true emissions shared memory
+    int emissions_fd = shm_open(SHM_TRUE_EMISSIONS_NAME, O_CREAT | O_RDWR | O_TRUNC, 0666);
+    if (emissions_fd < 0) {
+        std::cerr << "Failed to create true emissions shared memory: " << strerror(errno) << std::endl;
+        return false;
+    }
+
+    // Set data size
+    if (ftruncate(emissions_fd, emissions_size) != 0) {
+        std::cerr << "Failed to set true emissions data size: " << strerror(errno) << std::endl;
+        close(emissions_fd);
+        return false;
+    }
+
+    // Map data memory
+    void* emissions_map = mmap(nullptr, emissions_size, PROT_READ | PROT_WRITE, MAP_SHARED, emissions_fd, 0);
+    if (emissions_map == MAP_FAILED) {
+        std::cerr << "Failed to map true emissions memory: " << strerror(errno) << std::endl;
+        close(emissions_fd);
+        return false;
+    }
+
+    // Write data
+    memcpy(emissions_map, emissions.data(), emissions_size);
+
+    // Calculate statistics for validation
+    float min_val = emissions[0];
+    float max_val = emissions[0];
+    float sum_val = 0.0f;
+
+    for (size_t i = 0; i < emissions.size(); i++) {
+        float val = emissions[i];
+        if (val < min_val) min_val = val;
+        if (val > max_val) max_val = val;
+        sum_val += val;
+    }
+
+    std::cout << Color::CYAN << "[IPC] " << Color::RESET
+              << "True emissions written (" << Color::BOLD << emissions_size / 1024.0 << " KB" << Color::RESET << ")\n";
+    std::cout << "  Length : " << emissions.size() << " timesteps\n";
+    std::cout << "  Range  : [" << min_val << ", " << max_val << "], sum=" << sum_val << "\n";
+
+    // Memory Doctor: Log sent true emissions
+    if (g_memory_doctor.isEnabled()) {
+        g_memory_doctor.logSentData("true_emissions", emissions.data(),
+                                   1, emissions.size(), 0,
+                                   "True emission time series from eki.conf");
+    }
+
+    // Unmap data
+    munmap(emissions_map, emissions_size);
+    close(emissions_fd);
 
     return true;
 }
