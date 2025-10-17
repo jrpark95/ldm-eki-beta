@@ -1,127 +1,6 @@
-"""
-EKI IPC Reader - POSIX Shared Memory Reader for LDM-EKI Communication
-
-This module provides functionality to read configuration and observation data
-from POSIX shared memory segments created by the LDM-EKI C++ simulation.
-
-The reader implements low-level binary data parsing for IPC communication
-between the C++/CUDA forward model and the Python EKI inverse solver.
-
-Shared Memory Segments
------------------------
-1. **Initial Configuration** (/dev/shm/ldm_eki_config)
-   - Size: 12 bytes (basic) or 128 bytes (full config)
-   - Format: Little-endian binary
-   - Contents: Ensemble size, receptors, timesteps, algorithm parameters
-
-2. **Initial Observations** (/dev/shm/ldm_eki_data)
-   - Size: 12 bytes (header) + num_receptors × num_timesteps × 4 bytes (data)
-   - Format: status (int32), rows (int32), cols (int32), data (float32[])
-   - Contents: Gamma dose observations from reference simulation
-
-3. **Ensemble Configuration** (/dev/shm/ldm_eki_ensemble_config)
-   - Size: 12 bytes
-   - Format: num_states (int32), num_ensemble (int32), iteration_id (int32)
-
-4. **Ensemble Observations** (/dev/shm/ldm_eki_ensemble_obs_config, ..._data)
-   - Config: 12 bytes (ensemble_size, num_receptors, num_timesteps)
-   - Data: ensemble_size × num_receptors × num_timesteps × 4 bytes (float32)
-   - Layout: [Ens0: T0_R0, T0_R1, ..., T1_R0, ...], [Ens1: ...]
-
-Binary Data Formats
--------------------
-All integers and floats are little-endian (<) format.
-
-**Configuration Structure (128 bytes):**
-
-    Offset | Size | Type     | Field
-    -------|------|----------|------------------
-    0      | 4    | int32    | ensemble_size
-    4      | 4    | int32    | num_receptors
-    8      | 4    | int32    | num_timesteps
-    12     | 4    | int32    | iteration
-    16     | 4    | float32  | renkf_lambda
-    20     | 4    | float32  | noise_level
-    24     | 4    | float32  | time_days
-    28     | 4    | float32  | time_interval
-    32     | 4    | float32  | inverse_time_interval
-    36     | 4    | float32  | receptor_error
-    40     | 4    | float32  | receptor_mda
-    44     | 4    | float32  | prior_constant
-    48     | 4    | int32    | num_source
-    52     | 4    | int32    | num_gpu
-    56     | 8    | char[8]  | perturb_option
-    64     | 8    | char[8]  | adaptive_eki
-    72     | 8    | char[8]  | localized_eki
-    80     | 8    | char[8]  | regularization
-    88     | 8    | char[8]  | gpu_forward
-    96     | 8    | char[8]  | gpu_inverse
-    104    | 8    | char[8]  | source_location
-    112    | 8    | char[8]  | time_unit
-    120    | 8    | char[8]  | memory_doctor
-
-**Observation Data Structure:**
-
-    Header (12 bytes):
-        status (int32): 1 = ready, 0 = not ready
-        rows (int32): Number of receptors
-        cols (int32): Number of timesteps
-
-    Data (rows × cols × 4 bytes):
-        float32 array in row-major (C) order
-        Layout: [R0_T0, R0_T1, ..., R0_T23, R1_T0, R1_T1, ...]
-
-**Ensemble Observation Data:**
-
-    Config (12 bytes):
-        ensemble_size (int32)
-        num_receptors (int32)
-        num_timesteps (int32)
-
-    Data (ensemble_size × num_timesteps × num_receptors × 4 bytes):
-        float32 array in nested row-major order
-        Layout: [Ens0: T0_R0, T0_R1, T0_R2, T1_R0, ...],
-                [Ens1: T0_R0, T0_R1, T0_R2, T1_R0, ...], ...
-
-Error Handling
---------------
-- OSError: Raised when shared memory files cannot be accessed
-- RuntimeError: Raised when data format is invalid or corrupted
-- BufferError: Handled gracefully during memory map cleanup
-
-Performance Notes
------------------
-- Memory mapping (mmap) used for efficient large data transfers
-- Typical read times:
-  - Initial observations (3 × 24): < 1 ms
-  - Ensemble observations (100 × 24 × 3): < 10 ms
-- Zero-copy operations where possible using memoryview
-
-Usage Example
--------------
->>> from eki_ipc_reader import EKIIPCReader, receive_gamma_dose_matrix_shm
->>>
->>> # Read initial observations
->>> obs_3d = receive_gamma_dose_matrix_shm()  # shape (1, 3, 24)
->>>
->>> # Read ensemble observations (during EKI iteration)
->>> from eki_ipc_reader import receive_ensemble_observations_shm
->>> ens_obs = receive_ensemble_observations_shm()  # shape (100, 24, 3)
-
-Author
-------
-Siho Jang, 2025
-
-References
-----------
-.. [1] POSIX.1-2008, "shm_open - open a shared memory object"
-.. [2] Linux Programmer's Manual, "mmap(2) - map files or devices into memory"
-"""
-
 import os
 import mmap
 import struct
-import time
 import numpy as np
 from typing import Tuple, Optional
 from memory_doctor import memory_doctor
@@ -192,17 +71,6 @@ class EKIIPCReader:
 
         This function must be called before read_eki_observations() to validate
         array dimensions.
-
-        Examples
-        --------
-        >>> reader = EKIIPCReader()
-        >>> ens_size, n_rec, n_time = reader.read_eki_config()
-        >>> print(f"Config: {ens_size} ensembles, {n_rec} receptors, {n_time} timesteps")
-        Config: 100 ensembles, 3 receptors, 24 timesteps
-
-        Author
-        ------
-        Siho Jang, 2025
         """
         config_path = f"/dev/shm{self.SHM_CONFIG_NAME}"
         
@@ -528,35 +396,6 @@ def receive_ensemble_observations_shm(current_iteration=None):
         observations[1, :, :] = [[Ens1_T0_R0, Ens1_T0_R1],
                                  [Ens1_T1_R0, Ens1_T1_R1],
                                  [Ens1_T2_R0, Ens1_T2_R1]]
-
-    **Performance:**
-    - Memory mapping for efficient zero-copy read
-    - Typical read time: < 10 ms for 100 × 24 × 3 = 7200 float32 values
-    - Data copied to ensure persistence after mmap close
-
-    **Memory Doctor Mode:**
-    If enabled, saves received data to /tmp/eki_debug/ for debugging.
-
-    Examples
-    --------
-    >>> # Called by Model.state_to_ob() after LDM simulation completes
-    >>> obs = receive_ensemble_observations_shm(iteration=5)
-    >>> print(f"Received {obs.shape[0]} ensemble observations")
-    Received 100 ensemble observations
-    >>> print(f"Shape: {obs.shape} (ensemble, timestep, receptor)")
-    Shape: (100, 24, 3) (ensemble, timestep, receptor)
-    >>> # Check data validity
-    >>> print(f"Min: {obs.min():.3e}, Max: {obs.max():.3e}")
-    Min: 0.000e+00, Max: 1.234e-10
-
-    See Also
-    --------
-    receive_gamma_dose_matrix_shm : Read initial observations (reference simulation)
-    EKIIPCWriter.write_ensemble_states : Corresponding writer function
-
-    Author
-    ------
-    Siho Jang, 2025
     """
     import mmap
     import struct

@@ -1,12 +1,4 @@
-"""
-EKI IPC Writer - POSIX Shared Memory Writer for Python → LDM Communication
-
-This module provides functionality to write ensemble state data from Python
-to POSIX shared memory segments that will be read by the LDM-EKI C++ simulation.
-"""
-
 import os
-import mmap
 import struct
 import numpy as np
 from typing import Tuple
@@ -175,10 +167,6 @@ def write_ensemble_to_shm(states: np.ndarray, num_states: int, num_ensemble: int
 
     Returns:
         True if successful, False otherwise
-
-    Example:
-        >>> states = np.random.randn(24, 100)  # 24 timesteps, 100 ensemble members
-        >>> success = write_ensemble_to_shm(states, 24, 100)
     """
     writer = EKIIPCWriter()
 

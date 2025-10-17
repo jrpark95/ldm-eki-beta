@@ -1,33 +1,3 @@
-#!/usr/bin/env python3
-"""
-Memory Doctor - IPC Communication Debugging Utility
-
-This module provides comprehensive logging and verification of all data transfers
-between Python and C++ via POSIX shared memory. Used for debugging IPC issues
-and verifying data integrity during EKI optimization.
-
-Main Features:
-    - Logs all data sent from Python to LDM
-    - Logs all data received by Python from LDM
-    - Computes checksums for data integrity verification
-    - Tracks iteration numbers for proper data flow analysis
-    - Automatic log directory cleanup on startup
-
-Usage:
-    Enable via MEMORY_DOCTOR_MODE=On in input/eki_settings.txt
-    All logs are written to logs/memory_doctor/
-    Format: iter{000}_py_{sent|recv}_{data_type}.txt
-
-Author:
-    Siho Jang, 2025
-
-Examples:
-    >>> from memory_doctor import memory_doctor
-    >>> memory_doctor.set_enabled(True)
-    >>> memory_doctor.log_sent_data("ensemble_states", states, iteration=1)
-    >>> memory_doctor.log_received_data("observations", obs, iteration=1)
-"""
-
 import os
 import sys
 import glob
@@ -37,31 +7,6 @@ import struct
 import hashlib
 
 class MemoryDoctor:
-    """
-    IPC communication logging and verification utility.
-
-    This class provides methods to log and verify all data transfers between
-    Python and C++ during EKI optimization. Useful for debugging data corruption,
-    dimension mismatches, and communication protocol issues.
-
-    Attributes
-    ----------
-    enabled : bool
-        Whether Memory Doctor logging is active
-    log_dir : str
-        Directory path for log files (default: "../../logs/memory_doctor/")
-
-    Notes
-    -----
-    All log files follow the naming convention:
-        iter{iteration:03d}_py_{sent|recv}_{data_type}.txt
-
-    Each log file contains:
-        - Data dimensions and statistics
-        - MD5 checksum for integrity verification
-        - Full data dump for manual inspection
-        - Zero/NaN/Inf count analysis
-    """
 
     def __init__(self):
         """Initialize Memory Doctor with logging disabled."""
@@ -69,21 +14,6 @@ class MemoryDoctor:
         self.log_dir = "../../logs/memory_doctor/"
 
     def set_enabled(self, enable):
-        """
-        Enable or disable Memory Doctor mode.
-
-        Parameters
-        ----------
-        enable : bool
-            True to enable logging, False to disable
-
-        Notes
-        -----
-        When enabling, automatically:
-            1. Creates log directory if it doesn't exist
-            2. Cleans all previous log files
-            3. Prints status message to console
-        """
         self.enabled = enable
         if self.enabled:
             # Create log directory if it doesn't exist
@@ -96,14 +26,6 @@ class MemoryDoctor:
             print(f"[MEMORY_DOCTOR] 🧹 Cleaned previous log files from {self.log_dir}")
 
     def is_enabled(self):
-        """
-        Check if Memory Doctor logging is enabled.
-
-        Returns
-        -------
-        bool
-            True if logging is active, False otherwise
-        """
         return self.enabled
 
     def clean_log_directory(self):

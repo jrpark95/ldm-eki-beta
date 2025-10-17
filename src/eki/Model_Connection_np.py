@@ -1,80 +1,11 @@
-"""
-Model Connection for Non-Ensemble EKI (NumPy-based)
-
-This module provides a basic forward model interface for single-simulation EKI
-without ensemble parallelization. Used for testing and legacy compatibility.
-
-Main components:
-    - Gaussian puff forward model integration
-    - Single observation generation
-    - Prior ensemble generation
-    - Sequential state-to-observation mapping
-
-Author:
-    Siho Jang, 2025
-
-Notes:
-    This module is deprecated for production use. The ensemble version
-    (Model_Connection_np_Ensemble.py) provides better performance via
-    parallel ensemble simulations in LDM.
-"""
-
 import numpy as np
-import GaussianPuffClass_Rev_20240514 as Gpuff
-#from mpi4py import MPI
-import pycuda.driver as cuda
-import pycuda.autoinit
-import concurrent.futures
-import multiprocessing
-from multiprocessing import Process, Queue
 from copy import deepcopy
 
 desired_gpu_index_cupy = 0
 
 # Gaussian puff forward model
 class Model(object):
-    """
-    Forward model interface for non-ensemble Gaussian puff simulation.
-
-    This class provides sequential forward model evaluation without ensemble
-    parallelization. Used for testing and backward compatibility with older
-    EKI implementations.
-
-    Attributes
-    ----------
-    name : str
-        Model identifier ('gaussian_puff_model')
-    nGPU : int
-        Number of GPU devices
-    sample : int
-        Number of ensemble members
-    nsource : int
-        Number of emission sources
-    nreceptor : int
-        Number of receptor locations
-    nstate : int
-        Number of state variables
-    obs : ndarray
-        Observation vector
-    obs_err : ndarray
-        Observation error covariance
-
-    Notes
-    -----
-    For production use, prefer Model_Connection_np_Ensemble.py which provides
-    parallel ensemble simulation via shared memory IPC with LDM.
-    """
     def __init__(self, input_config, input_data):
-        """
-        Initialize forward model.
-
-        Parameters
-        ----------
-        input_config : dict
-            Configuration dictionary
-        input_data : dict
-            Input data dictionary
-        """
         self.name = 'gaussian_puff_model'
         self.nGPU = input_config['nGPU']
         self.input_data = input_data
