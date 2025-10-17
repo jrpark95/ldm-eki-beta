@@ -63,91 +63,75 @@ def load_config_from_shared_memory():
         'nGPU': 1,                         # Single GPU mode
     }
 
-    # Construct input_data dictionary (matches original YAML structure)
+    # TODO: Extend EKIConfigFull in C++ to include these arrays:
+    # - true_emissions[num_timesteps]
+    # - receptor_positions[num_receptors][3]  (lat, lon, alt)
+    # - source_location[3]  (x, y, z)
+    # - decay_constant, dose_conversion_factor
+    # - nuclide_name
+    # - emission_boundary_min, emission_boundary_max
+
+    # Construct input_data dictionary
     input_data = {
-        # Time parameters
-        'time': 0.25,  # Derived from simulation.conf time_end
-        'time_interval': 15,  # Fixed: 15 minutes (from eki.conf)
-        'inverse_time_interval': 0.25,  # Derived: time_interval converted to hours
-        'ave_t': 3,  # Fixed: 15 min / 5 min = 3
+        # Time parameters (from shared memory)
+        'time': shm_data['time_interval'] / 60.0,  # Convert minutes to hours
+        'time_interval': shm_data['time_interval'],  # EKI time interval (minutes)
+        'inverse_time_interval': shm_data['time_interval'] / 60.0,  # Time interval in hours
 
-        # Grid parameters (default values - not used in LDM forward model)
-        'size_alt': 100,
-        'size_lat': 100,
-        'size_lon': 100,
-        'alt_spacing': 500.0,
-        'lat_spacing': 500.0,
-        'lon_spacing': 500.0,
-
-        # Wind parameters (not used in LDM forward model)
-        'size_alt_wind': 100,
-        'size_lat_wind': 100,
-        'size_lon_wind': 100,
-        'wind_init_mode': None,
-        'wind_constant_value_x': 2.50,
-        'wind_constant_value_y': 0.0,
-        'wind_constant_value_z': 0.0,
-        'wind_grid_interval': 1500,
-        'grid_space_size_lat': 100,
-        'grid_space_size_lon': 100,
-
-        # Puff parameters (not used in LDM forward model)
-        'puff_concentration_threshold': 0.0e-10,
-        'R_max': 1.0E+200,
-
-        # Receptor parameters
+        # Receptor parameters (from shared memory)
         'nreceptor': shm_data['num_receptors'],
-        'receptor_position': [[1000.0, 1000.0, 1.0], [2000.0, 2000.0, 1.0], [3000.0, 3000.0, 1.0],
-                              [4000.0, 4000.0, 1.0], [5000.0, 5000.0, 1.0], [6000.0, 6000.0, 1.0],
-                              [7000.0, 7000.0, 1.0], [8000.0, 8000.0, 1.0], [9000.0, 9000.0, 1.0],
-                              [10000.0, 10000.0, 1.0], [12500.0, 12500.0, 1.0], [15000.0, 15000.0, 1.0]],
+
+        # TODO: Read from shared memory when C++ sends receptor_positions
+        # For now, using placeholder - LDM uses lat/lon from eki.conf, not these XYZ coordinates
+        'receptor_position': [[1000.0 * (i+1), 1000.0 * (i+1), 1.0] for i in range(shm_data['num_receptors'])],
+
         'nreceptor_err': 0.0,  # No additional measurement error (noise in observations)
         'nreceptor_MDA': 0.0,  # No MDA inflation
 
-        # Source parameters (v1.0: Hardcoded to Fixed location)
+        # Source parameters (v1.0: Fixed location mode)
         'Source_location': 'Fixed',  # Always use known source position
         'nsource': 1,                # Always single source
 
-        # Calculate number of state timesteps dynamically
-        # From num_timesteps in shared memory (already computed in C++)
+        # Number of state timesteps (from shared memory)
         'num_state_timesteps': shm_data['num_timesteps'],
 
-        # Source names (generated based on dynamic timesteps)
+        # Source names (generated dynamically)
         'source_name': [f'Kr-88-{i+1}' for i in range(shm_data['num_timesteps'])],
 
         # Source_1 (true emission source for reference simulation)
         # Format: [decay_constant, DCF, [x,y,z], [emission_series], 0.0, 0.0, 'nuclide']
+        # TODO: Read from shared memory when C++ sends:
+        #   - decay_constant (currently hardcoded Kr-88: 6.779608573551890e-05)
+        #   - dose_conversion_factor (currently hardcoded: 1.02e-13)
+        #   - source_location (currently hardcoded: [10.0, 10.0, 10.0])
+        #   - true_emissions array (CRITICAL: currently hardcoded 24 values)
+        #   - nuclide_name (currently hardcoded: 'Kr-88')
         'Source_1': [
-            6.779608573551890e-05,  # Kr-88 decay constant
-            1.02e-13,                # Dose conversion factor
-            [10.0, 10.0, 10.0],      # Source location (x, y, z)
-            # Emission time series (dynamic based on num_timesteps)
-            [1.90387731e+13, 1.90387731e+13, 1.90387731e+12, 1.90387731e+11,
-             1.90387731e+4, 1.90387731e+3, 1.90387731e+2, 1.90387731e+1,
-             2.26641204e+13, 2.26641204e+13, 2.26641204e+12, 2.26641204e+11,
-             2.26641204e+4, 2.26641204e+3, 2.26641204e+2, 2.26641204e+1,
-             1.51170139e+13, 1.51170139e+13, 1.51170139e+12, 1.51170139e+11,
-             1.51170139e+4, 1.51170139e+3, 1.51170139e+2, 1.51170139e+1],
+            6.779608573551890e-05,  # Kr-88 decay constant (TODO: read from SHM)
+            1.02e-13,                # Dose conversion factor (TODO: read from SHM)
+            [10.0, 10.0, 10.0],      # Source location (TODO: read from SHM)
+            # TODO: Replace with shm_data['true_emissions'] when available
+            [1.0e+12] * shm_data['num_timesteps'],  # Placeholder: constant emission
             0.0e-0,                  # Reserved field
             0.0e-0,                  # Reserved field
-            'Kr-88'                  # Nuclide name
+            'Kr-88'                  # Nuclide name (TODO: read from SHM)
         ],
 
         # Prior_Source_1 (initial guess for inversion)
         # Format: [decay_constant, DCF, [[x,y,z],[std]], [[emission_series],[std]], 'nuclide']
         'Prior_Source_1': [
-            6.779608573551890e-05,  # Kr-88 decay constant
-            1.02e-13,                # Dose conversion factor
-            [[10.0, 10.0, 100.0], [0.1]],  # Location and std
-            # Emission series and std (dynamic length)
+            6.779608573551890e-05,  # Kr-88 decay constant (TODO: read from SHM)
+            1.02e-13,                # Dose conversion factor (TODO: read from SHM)
+            [[10.0, 10.0, 100.0], [0.1]],  # Location and std (TODO: read from SHM)
+            # Prior emission: constant value with noise
             [[shm_data['prior_constant']] * shm_data['num_timesteps'], [shm_data['noise_level']]],
-            'Kr-88'                  # Nuclide name
+            'Kr-88'                  # Nuclide name (TODO: read from SHM)
         ],
 
-        # Prior source (default constant emission values)
+        # Prior source bounds (TODO: read from shared memory)
         'prior_source1': [1.0e+14, 1.0e+13, 6.77960857355189e-05],  # Kr-88
 
-        # Boundary
+        # Emission boundary for optimization (TODO: read from shared memory)
         'real_source1_boundary': [0.0, 1.0e+14],  # Kr-88
     }
 
