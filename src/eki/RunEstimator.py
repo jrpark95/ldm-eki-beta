@@ -165,63 +165,6 @@ for op in range(len(Optimization_list)):
                 Best_Iter_reshape = Best_Iter0[-1].reshape([input_data['nsource'],int(input_data['time']*24/input_data['inverse_time_interval'])])
                 Best_Iter_std_reshape = Best_Iter0_std[-1].reshape([input_data['nsource'],int(input_data['time']*24/input_data['inverse_time_interval'])])
 
-            def plot_iteration_graph(iterations, means, stds, file_path, csv_file_path):
-                plt.figure(figsize=(10, 6))
-                plt.plot(iterations, means, label='Mean', color='blue')
-                plt.errorbar(iterations, means, yerr=stds, fmt='o', color='red', label='Standard Deviation')
-                plt.xlabel('Iterations')
-                plt.ylabel('Values')
-                # plt.yscale('log')
-                plt.title('Mean and Standard Deviation over Iterations')
-                plt.legend()
-                plt.grid(True)
-                plt.savefig(file_path)
-                plt.close()
-                data = {
-                        'Iterations': iterations,
-                        'Mean': means,
-                        'Standard Deviation': stds
-                    }
-                df = pd.DataFrame(data)
-                df.to_csv(csv_file_path, index=False)
-
-            def plot_time_range_graph(time_range, means, stds, file_path, csv_file_path):
-                plt.figure(figsize=(10, 6))
-                plt.plot(time_range, means, label='Mean', color='blue')
-                plt.errorbar(time_range, means, yerr=stds, fmt='o', color='red', label='Standard Deviation')
-                plt.xlabel('Time_range')
-                plt.ylabel('Values')
-                plt.title('Mean and Standard Deviation over time_range')
-                plt.legend()
-                plt.grid(True)
-                plt.savefig(file_path)
-                plt.close()
-                data = {
-                        'Time_range': time_range,
-                        'Mean': means,
-                        'Standard Deviation': stds
-                    }
-                df = pd.DataFrame(data)
-                df.to_csv(csv_file_path, index=False)
-
-            def plot_position_graph(means, stds, file_path, csv_file_path):
-                plt.figure(figsize=(10, 6))
-                plt.plot(['x','y','z'], means, label='Mean', color='blue')
-                plt.errorbar(['x','y','z'], means, yerr=stds, fmt='o', color='red', label='Standard Deviation')
-                plt.xlabel('Position')
-                plt.ylabel('Values')
-                plt.title('Mean and Standard Deviation over (x,y,z)')
-                plt.legend()
-                plt.grid(True)
-                plt.savefig(file_path)
-                plt.close()
-                data = {
-                        'Mean': means,
-                        'Standard Deviation': stds
-                    }
-                df = pd.DataFrame(data)
-                df.to_csv(csv_file_path, index=False)
-
             print(i/(receptor_range)*100)
             t2 = time.time()
             Time_List.append(t2-t2i)
@@ -236,7 +179,7 @@ for op in range(len(Optimization_list)):
         seepoint = receptor_range
         for i in range(0, seepoint):
             nreceptor.append(i+1)
-            
+
         if input_config['Receptor_Increment'] == 'Off':
             list_index = 0  # Only one element in list when Receptor_Increment='Off'
         else:

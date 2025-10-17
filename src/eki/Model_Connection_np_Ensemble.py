@@ -1,8 +1,19 @@
 import numpy as np
 from copy import deepcopy
 
-from eki_ipc_reader import receive_gamma_dose_matrix_shm, EKIIPCReader, read_eki_full_config_shm, read_true_emissions_shm
-from memory_doctor import memory_doctor
+from eki_shm_config import (
+    load_config_from_shared_memory,
+    eki_config,
+    receive_gamma_dose_matrix_shm_wrapper,
+    send_tmp_states_shm
+)
+from eki_debug_logger import (
+    save_prior_state,
+    save_initial_observation,
+    save_prior_ensemble,
+    save_ensemble_states_sent,
+    save_ensemble_observations_received
+)
 
 # Color output support
 try:
@@ -17,274 +28,7 @@ except ImportError:
     Fore = Style = DummyColor()
     HAS_COLOR = False
 
-def load_config_from_shared_memory():
-    print(f"{Fore.MAGENTA}[ENSEMBLE]{Style.RESET_ALL} Loading configuration from shared memory...")
-
-    # Read full configuration from shared memory
-    shm_data = read_eki_full_config_shm()
-
-    # Read true emissions from separate shared memory segment
-    true_emissions = read_true_emissions_shm()
-    print(f"{Fore.CYAN}[IPC]{Style.RESET_ALL} True emissions loaded: {len(true_emissions)} timesteps")
-
-    memory_doctor_value = shm_data['memory_doctor'].strip()
-
-    if memory_doctor_value.lower() in ['on', '1', 'true']:
-        memory_doctor.set_enabled(True)
-        print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} ⚕️  Memory Doctor Mode enabled")
-    else:
-        memory_doctor.set_enabled(False)
-
-    # Construct input_config dictionary (matches original YAML structure)
-    input_config = {
-        'sample_ctrl': shm_data['ensemble_size'],
-        'nrepeat': 1,
-        'time': 1,
-        'iteration': shm_data['iteration'],
-        'Optimizer_order': ['EKI'],
-
-        # EKI options
-        'perturb_option': shm_data['perturb_option'],
-        'EnRML_step_length': 1.0,
-        'EnKF_MDA_steps': 0.7,
-        'REnKF_regularization': 'regularization.py',
-        'Adaptive_EKI': shm_data['adaptive_eki'],
-        'Localized_EKI': shm_data['localized_eki'],
-        'Localization': 'centralized',
-        'Localization_weighting_factor': 1.0,
-        'Regularization': shm_data['regularization'],
-        'REnKF_lambda': shm_data['renkf_lambda'],
-
-        # Other options
-        'Elimination': 'Off',
-        'Elimination_condition': 1.0e+6,
-        'Receptor_Increment': 'Off',
-
-        # GPU configuration (v1.0: Hardcoded to always use GPU)
-        'GPU_ForwardPhysicsModel': 'On',  # Always enabled (CUDA required)
-        'GPU_InverseModel': 'On',          # Always use CuPy for inverse model
-        'nGPU': 1,                         # Single GPU mode
-    }
-
-    # TODO: Extend EKIConfigFull in C++ to include these arrays:
-    # - true_emissions[num_timesteps]
-    # - receptor_positions[num_receptors][3]  (lat, lon, alt)
-    # - source_location[3]  (x, y, z)
-    # - decay_constant, dose_conversion_factor
-    # - nuclide_name
-    # - emission_boundary_min, emission_boundary_max
-
-    # Construct input_data dictionary
-    input_data = {
-        # Time parameters (from shared memory)
-        'time': shm_data['time_interval'] / 60.0,  # Convert minutes to hours
-        'time_interval': shm_data['time_interval'],  # EKI time interval (minutes)
-        'inverse_time_interval': shm_data['time_interval'] / 60.0,  # Time interval in hours
-
-        # Receptor parameters (from shared memory)
-        'nreceptor': shm_data['num_receptors'],
-
-        # TODO: Read from shared memory when C++ sends receptor_positions
-        # For now, using placeholder - LDM uses lat/lon from eki.conf, not these XYZ coordinates
-        'receptor_position': [[1000.0 * (i+1), 1000.0 * (i+1), 1.0] for i in range(shm_data['num_receptors'])],
-
-        'nreceptor_err': 0.0,  # No additional measurement error (noise in observations)
-        'nreceptor_MDA': 0.0,  # No MDA inflation
-
-        # Source parameters (v1.0: Fixed location mode)
-        'Source_location': 'Fixed',  # Always use known source position
-        'nsource': 1,                # Always single source
-
-        # Number of state timesteps (from shared memory)
-        'num_state_timesteps': shm_data['num_timesteps'],
-
-        # Source names (generated dynamically)
-        'source_name': [f'Kr-88-{i+1}' for i in range(shm_data['num_timesteps'])],
-
-        # Source_1 (true emission source for reference simulation)
-        # Format: [decay_constant, DCF, [x,y,z], [emission_series], 0.0, 0.0, 'nuclide']
-        # Values now read from shared memory (no hardcoded values)
-        'Source_1': [
-            shm_data['decay_constant'],  # Decay constant λ [s⁻¹] from nuclides.conf
-            1.02e-13,                    # Dose conversion factor (unused by LDM, kept for compatibility)
-            [10.0, 10.0, 10.0],          # Source location (unused by LDM - uses source.conf)
-            true_emissions.tolist(),     # True emission time series from eki.conf
-            0.0e-0,                      # Reserved field
-            0.0e-0,                      # Reserved field
-            'Kr-88'                      # Nuclide name (fixed to Kr-88 for v1.0)
-        ],
-
-        # Prior_Source_1 (initial guess for inversion)
-        # Format: [decay_constant, DCF, [[x,y,z],[std]], [[emission_series],[std]], 'nuclide']
-        # Values now read from shared memory (no hardcoded values)
-        'Prior_Source_1': [
-            shm_data['decay_constant'],  # Decay constant λ [s⁻¹] from nuclides.conf
-            1.02e-13,                    # Dose conversion factor (unused by LDM, kept for compatibility)
-            [[10.0, 10.0, 100.0], [0.1]],  # Location and std (unused by LDM - uses source.conf)
-            # Prior emission: constant value with noise
-            [[shm_data['prior_constant']] * shm_data['num_timesteps'], [shm_data['noise_level']]],
-            'Kr-88'                      # Nuclide name (fixed to Kr-88 for v1.0)
-        ],
-
-        # Prior source bounds (now read from shared memory)
-        'prior_source1': [1.0e+14, 1.0e+13, shm_data['decay_constant']],
-
-        # Emission boundary for optimization (kept as constants for v1.0)
-        'real_source1_boundary': [0.0, 1.0e+14],
-    }
-
-    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Configuration loaded:")
-    print(f"  Ensemble size      : {Style.BRIGHT}{input_config['sample_ctrl']}{Style.RESET_ALL}")
-    print(f"  Iterations         : {Style.BRIGHT}{input_config['iteration']}{Style.RESET_ALL}")
-    print(f"  Receptors          : {Style.BRIGHT}{input_data['nreceptor']}{Style.RESET_ALL}")
-    print(f"  Sources            : {Style.BRIGHT}{input_data['nsource']}{Style.RESET_ALL}")
-    print(f"  GPU devices        : {Style.BRIGHT}{input_config['nGPU']}{Style.RESET_ALL}")
-
-    return input_config, input_data
-
-class EKIConfigManager:
-    
-    def __init__(self):
-        self.ensemble_size = None
-        self.num_receptors = None
-        self.num_timesteps = None
-        self._is_loaded = False
-    
-    def load_from_shared_memory(self):
-        """Load configuration from shared memory."""
-        try:
-            reader = EKIIPCReader()
-            self.ensemble_size, self.num_receptors, self.num_timesteps = reader.read_eki_config()
-            self._is_loaded = True
-        except Exception as e:
-            import sys
-            sys.exit(1)
-    
-    def get_ensemble_size(self):
-        if not self._is_loaded:
-            self.load_from_shared_memory()
-        return self.ensemble_size
-    
-    def get_num_receptors(self):
-        if not self._is_loaded:
-            self.load_from_shared_memory()
-        return self.num_receptors
-    
-    def get_num_timesteps(self):
-        if not self._is_loaded:
-            self.load_from_shared_memory()
-        return self.num_timesteps
-    
-    def is_loaded(self):
-        return self._is_loaded
-
-# Global EKI configuration manager
-eki_config = EKIConfigManager()
-
 desired_gpu_index_cupy = 0
-
-def receive_gamma_dose_matrix_shm_wrapper():
-    """
-    New shared memory-based function to replace TCP socket communication.
-    
-    Uses POSIX shared memory for high-performance data transfer from LDM-EKI simulation.
-    
-    Returns:
-        3D numpy array of shape (1, num_receptors, num_timesteps) 
-    """
-    try:
-        gamma_dose_data = receive_gamma_dose_matrix_shm()
-        print(f"{Fore.BLUE}[IPC]{Style.RESET_ALL} Received initial observations: {gamma_dose_data.shape}")
-
-        # Exit immediately after displaying the matrix for testing
-        # import sys
-        # sys.exit(0)
-
-        return gamma_dose_data
-    except Exception as e:
-        print(f"\033[91m\033[1m[INPUT ERROR]\033[0m Failed to read initial observations from shared memory")
-        print()
-        print(f"  \033[93mProblem:\033[0m")
-        print(f"    Cannot read observation data from /dev/shm/ldm_eki_data.")
-        print(f"    Error: {e}")
-        print()
-        print(f"  \033[96mRequired action:\033[0m")
-        print(f"    1. Verify LDM has completed initial simulation")
-        print(f"    2. Check /dev/shm/ldm_eki_data exists and is readable")
-        print(f"    3. Ensure observation matrix format is correct")
-        print()
-        print(f"  \033[92mDebugging steps:\033[0m")
-        print(f"    ls -lh /dev/shm/ldm_eki_data  # Check file exists")
-        print(f"    od -t f4 -N 48 /dev/shm/ldm_eki_data  # Inspect first 12 floats")
-        print(f"    grep 'EKI_OBS' logs/ldm_eki_simulation.log  # Check LDM wrote data")
-        print()
-        print(f"  \033[96mFix in:\033[0m Verify LDM simulation completed successfully")
-        import sys
-        sys.exit(1)
-
-def send_tmp_states_shm(tmp_states):
-    """
-    Send ensemble states to LDM via POSIX shared memory.
-
-    Replaces the legacy TCP socket communication with high-performance
-    shared memory IPC.
-
-    Args:
-        tmp_states: 2D numpy array of shape (num_states, num_ensemble)
-                   e.g., (24, 100) for 24 timesteps × 100 ensemble members
-    """
-    from eki_ipc_writer import write_ensemble_to_shm
-
-    num_states, num_ensemble = tmp_states.shape
-
-    print(f"[EKI] Sending ensemble states via shared memory: {num_states}×{num_ensemble}")
-    print(f"[EKI] Data range: [{tmp_states.min():.3e}, {tmp_states.max():.3e}]")
-
-    success = write_ensemble_to_shm(tmp_states, num_states, num_ensemble)
-
-    if success:
-        print("[EKI] Ensemble states successfully sent to LDM via shared memory")
-    else:
-        print("[EKI] WARNING: Failed to send ensemble states")
-        raise RuntimeError("Failed to write ensemble states to shared memory")
-
-# def receive_gamma_dose_matrix_ens(Nens, Nrec):
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_socket.bind(('127.0.0.1', 12345))
-#     server_socket.listen(1)
-    
-#     conn, addr = server_socket.accept()
-#     print(f"Connection from {addr} has been established.")
-
-#     # Receive all data at once
-#     data = b""
-#     while True:
-#         packet = conn.recv(4096)
-#         if not packet:
-#             break
-#         data += packet
-
-#     conn.close()
-#     server_socket.close()
-
-#     data_str = data.decode()
-#     lines = data_str.strip().split("\n")
-
-#     # Calculate number of state timesteps dynamically from shared memory
-#     shm_config = read_eki_full_config_shm()
-#     num_state_timesteps = int(shm_config['time_days'] * 24 / shm_config['inverse_time_interval'])
-#     h_gamma_dose_3d = np.zeros((Nens, Nrec, num_state_timesteps))
-#     for line in lines:
-#         values = line.split(',')
-#         # print("Values:", values)
-#         ens = int(values[0])   
-#         # print("Ens:", ens)  
-#         t = int(values[1]) - 1    
-#         # print("Time Index (t):", t)  
-#         receptors = list(map(float, values[2:]))
-#         h_gamma_dose_3d[ens, :, t] = receptors  
-
-#     return h_gamma_dose_3d
 
 # Forward model interface
 class Model(object):
@@ -348,18 +92,8 @@ class Model(object):
         self.state_init = np.array(self.state_init).reshape(-1)
         self.state_std = np.array(self.state_std).reshape(-1)
 
-        # # Save prior state to logs2/dev
-        # np.save('/home/jrpark/ekitest2/logs2/dev/prior_state.npy', self.state_init)
-        # with open('/home/jrpark/ekitest2/logs2/dev/prior_state.txt', 'w') as f:
-        #     f.write(f"Prior State Data\n")
-        #     f.write(f"Shape: {self.state_init.shape}\n")
-        #     f.write(f"Min: {self.state_init.min():.12e}\n")
-        #     f.write(f"Max: {self.state_init.max():.12e}\n")
-        #     f.write(f"Mean: {self.state_init.mean():.12e}\n\n")
-        #     f.write(f"Data ({len(self.state_init)} values):\n")
-        #     for i, val in enumerate(self.state_init):
-        #         f.write(f"{i:4d}: {val:.12e}\n")
-        # print(f"[Model] Saved prior_state to logs2/dev/")
+        # Save prior state to debug logs (if enabled)
+        save_prior_state(self.state_init)
 
         self.decay = self.real_decay
         self.nstate = len(self.state_init)
@@ -425,20 +159,8 @@ class Model(object):
             # Store observations (same as reference: line 237)
             self.obs = np.array(gamma_dose_data[0]).reshape(-1)
 
-            # # Save initial observation to logs2/dev
-            # np.save('/home/jrpark/ekitest2/logs2/dev/initial_observation.npy', self.obs)
-            # # Also save as text for easy comparison
-            # with open('/home/jrpark/ekitest2/logs2/dev/initial_observation.txt', 'w') as f:
-            #     f.write(f"Initial Observation Data\n")
-            #     f.write(f"Shape: {self.obs.shape}\n")
-            #     f.write(f"Min: {self.obs.min():.12e}\n")
-            #     f.write(f"Max: {self.obs.max():.12e}\n")
-            #     f.write(f"Mean: {self.obs.mean():.12e}\n")
-            #     f.write(f"Sum: {self.obs.sum():.12e}\n\n")
-            #     f.write(f"Data (flattened, {len(self.obs)} values):\n")
-            #     for i, val in enumerate(self.obs):
-            #         f.write(f"{i:4d}: {val:.12e}\n")
-            # print(f"[Model.__init__] Saved initial_observation to logs2/dev/")
+            # Save initial observation to debug logs (if enabled)
+            save_initial_observation(self.obs)
 
         # Initialize error matrices (same as reference: lines 241-242)
         self.obs_err = np.diag((np.floor(self.obs * 0) + np.ones([len(self.obs)])*self.nreceptor_err))  # nreceptor_err (percentage), needed to square later
@@ -463,22 +185,8 @@ class Model(object):
             # Use abs() to prevent negative initial values (same as reference)
             state[i, :] = np.abs(np.random.normal(self.state_init[i], self.state_std[i], self.sample))
 
-        # # Save prior ensemble to logs2/dev
-        # np.save('/home/jrpark/ekitest2/logs2/dev/prior_ensemble.npy', state)
-        # with open('/home/jrpark/ekitest2/logs2/dev/prior_ensemble.txt', 'w') as f:
-        #     f.write(f"Prior Ensemble Data\n")
-        #     f.write(f"Shape: {state.shape} (num_states x num_ensemble)\n")
-        #     f.write(f"Min: {state.min():.12e}\n")
-        #     f.write(f"Max: {state.max():.12e}\n")
-        #     f.write(f"Mean: {state.mean():.12e}\n")
-        #     f.write(f"Std: {state.std():.12e}\n\n")
-        #     f.write(f"First 5 timesteps, all ensembles:\n")
-        #     for t in range(min(5, state.shape[0])):
-        #         f.write(f"\nTimestep {t}:\n")
-        #         for e in range(min(10, state.shape[1])):
-        #             f.write(f"  Ens{e:3d}: {state[t, e]:.12e}\n")
-        # print(f"[Model] Saved prior_ensemble to logs2/dev/")
-        # print(f"[Model] Prior ensemble shape: {state.shape}, range: [{state.min():.3e}, {state.max():.3e}]")
+        # Save prior ensemble to debug logs (if enabled)
+        save_prior_ensemble(state)
 
         return state
     
@@ -504,21 +212,8 @@ class Model(object):
             self._iteration_counter = 0
         self._iteration_counter += 1
 
-        # # Save ensemble states being sent to logs2/dev
-        # np.save(f'/home/jrpark/ekitest2/logs2/dev/iter{self._iteration_counter:03d}_ensemble_states_sent.npy', tmp_states)
-        # with open(f'/home/jrpark/ekitest2/logs2/dev/iter{self._iteration_counter:03d}_ensemble_states_sent.txt', 'w') as f:
-        #     f.write(f"Iteration {self._iteration_counter} - Ensemble States Sent (Python → C++)\n")
-        #     f.write(f"Shape: {tmp_states.shape} (num_timesteps x num_ensemble)\n")
-        #     f.write(f"Min: {tmp_states.min():.12e}\n")
-        #     f.write(f"Max: {tmp_states.max():.12e}\n")
-        #     f.write(f"Mean: {tmp_states.mean():.12e}\n")
-        #     f.write(f"Std: {tmp_states.std():.12e}\n\n")
-        #     f.write(f"First 5 timesteps, first 10 ensembles:\n")
-        #     for t in range(min(5, tmp_states.shape[0])):
-        #         f.write(f"\nTimestep {t}:\n")
-        #         for e in range(min(10, tmp_states.shape[1])):
-        #             f.write(f"  Ens{e:3d}: {tmp_states[t, e]:.12e}\n")
-        # print(f"[EKI] Saved iteration {self._iteration_counter} ensemble states to logs2/dev/")
+        # Save ensemble states being sent to debug logs (if enabled)
+        save_ensemble_states_sent(self._iteration_counter, tmp_states)
 
         # Pass iteration counter as timestep_id to help detect fresh data
         from eki_ipc_writer import EKIIPCWriter
@@ -573,24 +268,8 @@ class Model(object):
         # This matches reference implementation: timestep-major within each ensemble
         print(f"{Fore.BLUE}[IPC]{Style.RESET_ALL} Received ensemble observations: {tmp_results.shape}")
 
-        # Save all iteration ensemble observations to logs2/dev
-        # Convert to reference format: (ensemble, receptors, timesteps)
-        # tmp_results is currently (ensemble, timesteps, receptors)
-        # tmp_results_transposed = np.transpose(tmp_results, (0, 2, 1))
-        # np.save(f'/home/jrpark/ekitest2/logs2/dev/iter{self._iteration_counter:03d}_ensemble_observations_received.npy', tmp_results_transposed)
-        # with open(f'/home/jrpark/ekitest2/logs2/dev/iter{self._iteration_counter:03d}_ensemble_observations_received.txt', 'w') as f:
-        #     f.write(f"Iteration {self._iteration_counter} - Ensemble Observations Received (C++ → Python)\n")
-        #     f.write(f"Shape: {tmp_results_transposed.shape} (num_ensemble x num_receptors x num_timesteps)\n")
-        #     f.write(f"Min: {tmp_results_transposed.min():.12e}\n")
-        #     f.write(f"Max: {tmp_results_transposed.max():.12e}\n")
-        #     f.write(f"Mean: {tmp_results_transposed.mean():.12e}\n")
-        #     f.write(f"Std: {tmp_results_transposed.std():.12e}\n\n")
-        #     f.write(f"First ensemble, all receptors, first 5 timesteps:\n")
-        #     for r in range(tmp_results_transposed.shape[1]):
-        #         f.write(f"\nReceptor {r}:\n")
-        #         for t in range(min(5, tmp_results_transposed.shape[2])):
-        #             f.write(f"  T{t:3d}: {tmp_results_transposed[0, r, t]:.12e}\n")
-        # print(f"[Model] Saved iteration {self._iteration_counter} ensemble observations to logs2/dev/")
+        # Save ensemble observations received to debug logs (if enabled)
+        save_ensemble_observations_received(self._iteration_counter, tmp_results)
 
         # Reshape for EKI: Need transpose to match reference final order
         # tmp_results is [ensemble, timestep, receptor] from C++
@@ -632,9 +311,8 @@ class Model(object):
         self.obs = np.array(gamma_dose_data[0]).reshape(-1)
         print(f"[Model] Set obs array with size {len(self.obs)}")
 
-        # # # Save initial observation to log
-        # np.save('/home/jrpark/ekitest2/logs/development/initial_observation.npy', self.obs)
-        # print(f"[Model] Saved initial_observation to logs/development/initial_observation.npy")
+        # Save initial observation to debug logs (if enabled)
+        save_initial_observation(self.obs)
 
         # Recalculate error matrices with actual observation values
         self.obs_err = np.diag((np.floor(self.obs * 0) + np.ones([len(self.obs)])*self.nreceptor_err))
