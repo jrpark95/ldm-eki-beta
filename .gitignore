@@ -1,0 +1,42 @@
+# Compiled files
+*.o
+*.so
+*.a
+objectfiles/
+ldm-eki
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Output and logs
+output/
+logs/
+*.log
+
+# VTK files
+*.vtk
+
+# Documentation (markdown files)
+*.md
+
+# Backup files
+*.bak
+*.backup
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+
+# Claude Code
+.claude/
