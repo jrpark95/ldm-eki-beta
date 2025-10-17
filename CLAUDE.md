@@ -313,7 +313,9 @@ util/                        - 유틸리티 스크립트
 ├── cleanup.py               - 데이터 정리 스크립트
 ├── compare_all_receptors.py - 결과 시각화 (자동 실행)
 ├── compare_logs.py          - 로그 비교 도구
-└── diagnose_convergence_issue.py - 수렴 진단 도구
+├── diagnose_convergence_issue.py - 수렴 진단 도구
+├── detailed_postprocess.py  - 상세 후처리 도구
+└── visualize_vtk.py         - VTK 입자 분포 시각화 및 GIF 생성
 
 input/                       - 입력 설정 파일 (data/ 폴더 제거됨)
 ├── setting.txt              - LDM 시뮬레이션 설정
@@ -458,3 +460,28 @@ CUDA 커널 에러를 자동으로 수집하여 시뮬레이션 종료 시 일�
   - Markdown 형식의 간결한 요약 생성
 - 사용법: `python3 util/detailed_postprocess.py`
 - 자동 안내: 시뮬레이션 종료 시 자동으로 실행 방법 안내 메시지 출력
+
+### VTK Particle Distribution Visualization (2025-10-17)
+- `util/visualize_vtk.py` 생성 - 지리적 입자 분포 시각화 도구
+- 주요 기능:
+  - VTK 파일로부터 입자 위치 데이터 읽기 (PyVista 사용)
+  - Cartopy 기반 지리적 지도 위에 입자 분포 히트맵 표시
+  - Gaussian smoothing으로 부드러운 컨투어 생성 (sigma=2.0)
+  - 시계열 VTK 파일들을 애니메이션 GIF로 변환
+- 자동화 기능:
+  - 인자 없이 실행 시 자동으로 VTK 디렉토리 감지 (prior/ensemble)
+  - 전체 VTK 파일 스캔으로 최대 extent 자동 계산
+  - 모든 프레임에서 일관된 정사각형 지도 영역 사용
+  - 마지막 타임스텝 자동 감지
+- 시각화 개선:
+  - 정사각형 extent로 왜곡 없는 지도 표시
+  - 고해상도 히스토그램 bins (400×400)
+  - Logarithmic/linear 색상 스케일 지원
+  - 정사각형 figure (12×12) 균형잡힌 비율
+- 사용법:
+  - 기본: `python3 util/visualize_vtk.py` (완전 자동)
+  - 단일 파일: `--single output/plot_vtk_prior/plot_00100.vtk`
+  - 커스텀: `--mode prior --start 1 --end 100 --step 5`
+  - 스무딩 조절: `--sigma 3.0` (강함) / `--sigma 1.0` (약함)
+- 출력: `output/results/particle_distribution_{prior|ensemble}.gif`
+- Conda 환경: `ldm-viz` (pyvista, matplotlib, cartopy, scipy, imageio)
