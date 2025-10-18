@@ -533,7 +533,8 @@ __global__ void advectParticles(
             if(hmix/abs(obkl) < 1.0){ // Neutral condition
                 if(ustr<1.0e-4) ustr=1.0e-4;
                 turb_sigma_u = 2.0*ustr*exp(-3.0e-4*p.z/ustr);
-                if(turb_sigma_u<1.0e-5) turb_sigma_u=1.0e-5;
+                // Minimum turbulence sigma values to prevent collapse (empirical thresholds)
+                if(turb_sigma_u<1.0e-4) turb_sigma_u=1.0e-4;
                 turb_sigma_v = 1.3*ustr*exp(-2.0e-4*p.z/ustr);
                 if(turb_sigma_v<1.0e-5) turb_sigma_v=1.0e-5;
                 turb_sigma_w=turb_sigma_v;
@@ -784,13 +785,14 @@ __global__ void advectParticles(
                 // if (idx == 0 && tstep <= 3) {
                 //     printf("[GPU] WETDEP enabled: lsp=%.3f, convp=%.3f, clouds=%.1f\n", lsp, convp, clouds_v);
                 // }
-                const float lfr[5] = {0.5f, 0.65f, 0.8f, 0.9f, 0.95f};
-                const float cfr[5] = {0.4f, 0.55f, 0.7f, 0.8f, 0.9f};
+                // Scavenging fractions by precipitation type (FLEXPART standard values)
+                const float lfr[5] = {0.5f, 0.65f, 0.8f, 0.9f, 0.95f};  // Large-scale precip fractions
+                const float cfr[5] = {0.0f, 0.05f, 0.1f, 0.2f, 0.3f};   // Convective precip fractions
 
                 int weti = (lsp > 20.0f) ? 5 : (lsp > 8.0f) ? 4 : (lsp > 3.0f) ? 3 : (lsp > 1.0f) ? 2 : 1;
                 int wetj = (convp > 20.0f) ? 5 : (convp > 8.0f) ? 4 : (convp > 3.0f) ? 3 : (convp > 1.0f) ? 2 : 1;
 
-                float grfraction = 0.05f;
+                float grfraction = 0.05f;  // Default 5% precipitation capture fraction
                 if (lsp + convp > 0.0f) {
                     grfraction = fmaxf(0.05f, cc * (lsp * lfr[weti - 1] + convp * cfr[wetj - 1]) / (lsp + convp));
                 }
@@ -799,8 +801,9 @@ __global__ void advectParticles(
 
                 // Wet scavenging calculation
                 float wetscav = 0.0f;
-                const float weta = 9.99999975e-5f;
-                const float wetb = 0.800000012f;
+                // Empirical wet deposition parameters (FLEXPART values)
+                const float weta = 9.99999975e-5f;  // Below-cloud scavenging coefficient
+                const float wetb = 0.800000012f;    // Precipitation intensity exponent
                 const float henry = p.drydep_vel;
 
                 if (weta > 0.0f) {

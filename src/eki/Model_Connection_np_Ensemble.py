@@ -32,6 +32,16 @@ desired_gpu_index_cupy = 0
 
 # Forward model interface
 class Model(object):
+    """
+    Forward model interface for LDM-EKI ensemble simulations.
+
+    Manages IPC communication with C++ LDM code and ensemble generation.
+
+    Attributes:
+        obs (ndarray): True observations from initial simulation
+        obs_err (ndarray): Observation error standard deviations
+        num_ensemble (int): Number of ensemble members
+    """
     def __init__(self, input_config, input_data):
         self.name = 'gaussian_puff_model'
         self.nGPU = input_config['nGPU']
@@ -180,6 +190,20 @@ class Model(object):
         return self.name
 
     def make_ensemble(self):
+        """
+        Generate prior ensemble using Gaussian sampling.
+
+        Samples emission rates from Gaussian distribution around prior mean.
+        Applies absolute value to ensure non-negative emissions.
+
+        Args:
+            prior_emission (float): Prior mean emission rate
+            prior_std (float): Prior standard deviation
+            num_states (int): Number of emission timesteps
+
+        Returns:
+            ndarray: Ensemble states (num_states × num_ensemble) with all positive values
+        """
         state = np.empty([self.nstate, self.sample])
         for i in range(self.nstate):
             # Use abs() to prevent negative initial values (same as reference)
@@ -192,6 +216,22 @@ class Model(object):
     
 
     def state_to_ob(self, state):
+        """
+        Convert ensemble states to observations via forward model (C++ LDM).
+
+        Sends ensemble states to C++ via shared memory, waits for simulation,
+        reads back ensemble observations.
+
+        Args:
+            state (ndarray): Ensemble emission states (num_states × num_ensemble)
+
+        Returns:
+            ndarray: Ensemble observations (num_receptors × num_timesteps × num_ensemble)
+
+        Note:
+            Uses IPC polling with 1-second intervals. Deletes stale observation files
+            before simulation to prevent reading outdated data.
+        """
 
         model_obs_list = []
         tmp_states = state.copy()

@@ -203,7 +203,7 @@ void LDM::runSimulation(){
         }
 
         // Debug: Copy and print first particle position every 5 timesteps
-        if(timestep % 5 == 0) {  // Every 5 timesteps for tracking
+        if(timestep % 5 == 0) {  // Debug output every 5 timesteps
             LDMpart first_particle;
             cudaError_t err = cudaMemcpy(&first_particle, d_part, sizeof(LDMpart), cudaMemcpyDeviceToHost);
             if (err == cudaSuccess) {
@@ -225,7 +225,7 @@ void LDM::runSimulation(){
             printf("Time steps : \t%d of \t%d\n", timestep, (int)(time_end/dt));
             
             // Debug GFS loading condition at key timepoints
-            if(timestep == 1080) {  // Exactly at 10800 seconds
+            if(timestep == 1080) {  // Check at 10800s (3 hours) for GFS data validation
                 printf("[DEBUG] GFS condition check: currentTime=%.1f, time_interval=%d, left=%d, gfs_idx=%d, condition=%s\n", 
                        currentTime, time_interval, static_cast<int>(currentTime/time_interval), gfs_idx,
                        (static_cast<int>(currentTime/time_interval) > gfs_idx) ? "TRUE" : "FALSE");
@@ -661,7 +661,7 @@ void LDM::runSimulation_eki(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[6A");  // Move up 6 lines (increased from 4)
+                fprintf(stderr, "\033[6A");  // Move cursor up 6 lines to overwrite progress bar
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
@@ -1111,7 +1111,7 @@ void LDM::runSimulation_eki_dump(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[6A");  // Move up 6 lines (increased from 4)
+                fprintf(stderr, "\033[6A");  // Move cursor up 6 lines to overwrite progress bar
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");

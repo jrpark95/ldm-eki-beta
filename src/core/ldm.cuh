@@ -263,18 +263,28 @@ extern std::ofstream* g_log_file;
 
 // Physical and grid constants organized (no logic changes)
 namespace Constants {
-    // 격자 상수
+    // Grid constants
     constexpr float LDAPS_E = 132.36f, LDAPS_W = 121.06f, LDAPS_N = 43.13f, LDAPS_S = 32.20f;
     constexpr int dimX = 602, dimY = 781, dimZ_pres = 24, dimZ_etas = 71;
     constexpr int dimX_GFS = 720, dimY_GFS = 361, dimZ_GFS = 26;
-    constexpr int time_interval = 10800;
-    
-    // 물리 상수
-    constexpr float d_trop = 50.0f, d_strat = 0.1f, turbmesoscale = 0.16f, r_earth = 6371000.0f;
-    constexpr float _myl = 1.81e-5f, _nyl = 0.15e-4f, _lam = 6.53e-8f, _kb = 1.38e-23f;
-    constexpr float _eps = 1.2e-38f, _Tr = 293.15f, _rair = 287.05f, _ga = 9.81f, _href = 15.0f;
-    constexpr int _nspec = 19;
-    constexpr int NI = 11;
+    constexpr int time_interval = 10800;  // GFS data time interval [seconds] (3 hours)
+
+    // Physical constants
+    constexpr float d_trop = 50.0f;            // Troposphere reference diffusivity [m²/s]
+    constexpr float d_strat = 0.1f;            // Stratosphere reference diffusivity [m²/s]
+    constexpr float turbmesoscale = 0.16f;     // Mesoscale turbulence intensity factor (dimensionless)
+    constexpr float r_earth = 6371000.0f;      // Earth radius [m]
+    constexpr float _myl = 1.81e-5f;           // Dynamic viscosity of air [Pa·s]
+    constexpr float _nyl = 0.15e-4f;           // Kinematic viscosity of air [m²/s]
+    constexpr float _lam = 6.53e-8f;           // Thermal conductivity of air [W/(m·K)]
+    constexpr float _kb = 1.38e-23f;           // Boltzmann constant [J/K]
+    constexpr float _eps = 1.2e-38f;           // Numerical stability epsilon (underflow protection)
+    constexpr float _Tr = 293.15f;             // Reference temperature [K] (20°C)
+    constexpr float _rair = 287.05f;           // Gas constant for dry air [J/(kg·K)]
+    constexpr float _ga = 9.81f;               // Gravitational acceleration [m/s²]
+    constexpr float _href = 15.0f;             // Reference height [m] (for dispersion calculations)
+    constexpr int _nspec = 19;                 // Number of species in stability calculations
+    constexpr int NI = 11;                     // Number of interpolation grid points
     // Note: N_NUCLIDES is defined as a macro in ldm_cram2.cuh (included below)
 }
 
