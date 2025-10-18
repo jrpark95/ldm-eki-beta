@@ -59,5 +59,5 @@ struct alignas(16) KernelScalars {
     // Device Memory Pointers
     // -------------------------------------------------------------------------
     const float* T_matrix; ///< CRAM decay transition matrix (N_NUCLIDES × N_NUCLIDES)
-    const float* flex_hgt; ///< Vertical height levels array (dimZ_GFS elements)
+    const float* height_levels; ///< Vertical height levels array (dimZ_GFS elements)
 };

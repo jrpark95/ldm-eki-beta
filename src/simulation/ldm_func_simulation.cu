@@ -297,7 +297,7 @@ void LDM::runSimulation(){
  * - Past index: floor(currentTime / time_interval)
  * - Future index: past_index + 1
  * - Automatic range checking and boundary handling
- * - Height field (d_g_height_levels) synchronized with pressure-level data
+ * - Height field (d_height_levels) synchronized with pressure-level data
  * - Device-to-device memcpy from cache to working buffers
  *
  * Ensemble vs. Single Mode:
@@ -472,7 +472,7 @@ void LDM::runSimulation_eki(){
             }
 
             // Update height data as well
-            g_height_levels = g_eki_meteo.host_g_height_levels_data[past_meteo_index];
+            g_height_levels = g_eki_meteo.h_height[past_meteo_index];
 
 #ifdef DEBUG
             // Verify height data at first timestep only
@@ -486,7 +486,7 @@ void LDM::runSimulation_eki(){
 #endif
             
             // Copy height data to GPU memory
-            cudaError_t hgt_err = cudaMemcpy(d_g_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+            cudaError_t hgt_err = cudaMemcpy(d_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
             if (hgt_err != cudaSuccess) {
                 // Log to file only (collected by Kernel Error Collector for batch reporting)
                 extern std::ofstream* g_log_file;
@@ -920,7 +920,7 @@ void LDM::runSimulation_eki_dump(){
             }
 
             // Update height data as well
-            g_height_levels = g_eki_meteo.host_g_height_levels_data[past_meteo_index];
+            g_height_levels = g_eki_meteo.h_height[past_meteo_index];
 
 #ifdef DEBUG
             // Verify height data at first timestep only
@@ -934,7 +934,7 @@ void LDM::runSimulation_eki_dump(){
 #endif
             
             // Copy height data to GPU memory
-            cudaError_t hgt_err = cudaMemcpy(d_g_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+            cudaError_t hgt_err = cudaMemcpy(d_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
             if (hgt_err != cudaSuccess) {
                 // Log to file only (collected by Kernel Error Collector for batch reporting)
                 extern std::ofstream* g_log_file;

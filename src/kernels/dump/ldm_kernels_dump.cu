@@ -7,10 +7,10 @@
 
 __global__ void advectParticlesWithVTK(
     LDM::LDMpart* d_part, float t0, int rank, float* d_dryDep, float* d_wetDep, int mesh_nx, int mesh_ny,
-    FlexUnis* device_meteorological_flex_unis0,
-    FlexPres* device_meteorological_flex_pres0,
-    FlexUnis* device_meteorological_flex_unis1,
-    FlexPres* device_meteorological_flex_pres1,
+    FlexUnis* d_surface_past,
+    FlexPres* d_pressure_past,
+    FlexUnis* d_surface_future,
+    FlexPres* d_pressure_future,
     const KernelScalars ks){
 
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -50,8 +50,8 @@ __global__ void advectParticlesWithVTK(
         for(int i=0; i<2; i++){
             for(int j=0; j<2; j++){
                 index = (xidx+i) * dimY_GFS + (yidx+j);
-                hmix = max(hmix, device_meteorological_flex_unis0[index].HMIX);
-                hmix = max(hmix, device_meteorological_flex_unis1[index].HMIX);
+                hmix = max(hmix, d_surface_past[index].HMIX);
+                hmix = max(hmix, d_surface_future[index].HMIX);
             }
         }
 
@@ -60,7 +60,7 @@ __global__ void advectParticlesWithVTK(
         float zeta = p.z/hmix;
         
         for(int i=0; i<dimZ_GFS; i++){
-            if(ks.flex_hgt[i] > p.z){
+            if(ks.height_levels[i] > p.z){
                 zidx = i-1;  // Fixed: use lower level index like CRAM
                 break;
             }
@@ -71,12 +71,12 @@ __global__ void advectParticlesWithVTK(
         float y0 = p.y-yidx;
         
         // CRITICAL FIX: 높이 차이가 0에 가까우면 안전한 값으로 설정
-        float height_diff = ks.flex_hgt[zidx+1] - ks.flex_hgt[zidx];
+        float height_diff = ks.height_levels[zidx+1] - ks.height_levels[zidx];
         float z0;
         if (abs(height_diff) < 1e-6f) {
             z0 = 0.0f; // 높이 차이가 거의 없으면 하위 레벨 사용
         } else {
-            z0 = (p.z - ks.flex_hgt[zidx]) / height_diff;
+            z0 = (p.z - ks.height_levels[zidx]) / height_diff;
         }
         
         float x1 = 1-x0;
@@ -86,75 +86,75 @@ __global__ void advectParticlesWithVTK(
         
         // Debug disabled for performance
 
-        float ustr = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].USTR
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].USTR
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].USTR
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].USTR
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].USTR
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].USTR
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].USTR
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].USTR;
+        float ustr = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].USTR
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].USTR
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].USTR
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].USTR
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].USTR
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].USTR
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].USTR
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].USTR;
 
-        float wstr = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].WSTR
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].WSTR
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].WSTR
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].WSTR
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].WSTR
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].WSTR
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].WSTR
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].WSTR;
+        float wstr = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].WSTR
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].WSTR
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].WSTR
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].WSTR
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].WSTR
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].WSTR
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].WSTR
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].WSTR;
 
-        float obkl = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].OBKL
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].OBKL
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].OBKL
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].OBKL
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].OBKL
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].OBKL
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].OBKL
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].OBKL;
+        float obkl = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].OBKL
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].OBKL
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].OBKL
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].OBKL
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].OBKL
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].OBKL
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].OBKL
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].OBKL;
 
         obkl = 1/obkl;
 
-        float vdep = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].VDEP
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].VDEP
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].VDEP
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].VDEP
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].VDEP
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].VDEP
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].VDEP
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].VDEP;
+        float vdep = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].VDEP
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].VDEP
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].VDEP
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].VDEP
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].VDEP
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].VDEP
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].VDEP
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].VDEP;
 
-        float lsp = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].LPREC
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].LPREC
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].LPREC
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].LPREC
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].LPREC
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].LPREC
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].LPREC
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].LPREC;
+        float lsp = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].LPREC
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].LPREC
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].LPREC
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].LPREC
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].LPREC
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].LPREC
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].LPREC
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].LPREC;
 
-        float convp = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].CPREC
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].CPREC
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].CPREC
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].CPREC
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].CPREC
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].CPREC
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].CPREC
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].CPREC;
+        float convp = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].CPREC
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].CPREC
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].CPREC
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].CPREC
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].CPREC
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].CPREC
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].CPREC
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].CPREC;
 
-        float cc = x1*y1*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].TCC
-                    +x0*y1*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx)].TCC
-                    +x1*y0*t1*device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx+1)].TCC
-                    +x0*y0*t1*device_meteorological_flex_unis0[(xidx+1) * dimY_GFS + (yidx+1)].TCC
-                    +x1*y1*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].TCC
-                    +x0*y1*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx)].TCC
-                    +x1*y0*t0*device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx+1)].TCC
-                    +x0*y0*t0*device_meteorological_flex_unis1[(xidx+1) * dimY_GFS + (yidx+1)].TCC;
+        float cc = x1*y1*t1*d_surface_past[(xidx) * dimY_GFS + (yidx)].TCC
+                    +x0*y1*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx)].TCC
+                    +x1*y0*t1*d_surface_past[(xidx) * dimY_GFS + (yidx+1)].TCC
+                    +x0*y0*t1*d_surface_past[(xidx+1) * dimY_GFS + (yidx+1)].TCC
+                    +x1*y1*t0*d_surface_future[(xidx) * dimY_GFS + (yidx)].TCC
+                    +x0*y1*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx)].TCC
+                    +x1*y0*t0*d_surface_future[(xidx) * dimY_GFS + (yidx+1)].TCC
+                    +x0*y0*t0*d_surface_future[(xidx+1) * dimY_GFS + (yidx+1)].TCC;
 
 
         // Debug: Check individual DRHO values before interpolation
-        float drho_000 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO;
-        float drho_100 = device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO;
+        float drho_000 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO;
+        float drho_100 = d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO;
         
         if (idx == 0 && isnan(drho_000)) {
 // printf("[DRHO_DEBUG] DRHO_000 is NaN at indices [%d,%d,%d,%d]\n", xidx, yidx, zidx, 0);
@@ -163,42 +163,42 @@ __global__ void advectParticlesWithVTK(
 // printf("[DRHO_DEBUG] DRHO_100 is NaN at indices [%d,%d,%d,%d]\n", xidx+1, yidx, zidx, 0);
         }
         
-        float drho_raw = x1*y1*z1*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
-                    +x0*y1*z1*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
-                    +x1*y0*z1*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
-                    +x0*y0*z1*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
-                    +x1*y1*z0*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
-                    +x0*y1*z0*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
-                    +x1*y0*z0*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
-                    +x0*y0*z0*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
-                    +x1*y1*z1*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
-                    +x0*y1*z1*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
-                    +x1*y0*z1*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
-                    +x0*y0*z1*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
-                    +x1*y1*z0*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
-                    +x0*y1*z0*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
-                    +x1*y0*z0*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
-                    +x0*y0*z0*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO;
+        float drho_raw = x1*y1*z1*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
+                    +x0*y1*z1*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
+                    +x1*y0*z1*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
+                    +x0*y0*z1*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
+                    +x1*y1*z0*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
+                    +x0*y1*z0*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
+                    +x1*y0*z0*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
+                    +x0*y0*z0*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
+                    +x1*y1*z1*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
+                    +x0*y1*z1*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].DRHO
+                    +x1*y0*z1*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
+                    +x0*y0*z1*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].DRHO
+                    +x1*y1*z0*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
+                    +x0*y1*z0*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].DRHO
+                    +x1*y0*z0*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO
+                    +x0*y0*z0*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].DRHO;
         
         // Fix NaN issue: replace NaN with 0
         float drho = isnan(drho_raw) ? 0.0f : drho_raw;
 
-        float rho = x1*y1*z1*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
-                   +x0*y1*z1*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
-                   +x1*y0*z1*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
-                   +x0*y0*z1*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
-                   +x1*y1*z0*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
-                   +x0*y1*z0*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
-                   +x1*y0*z0*t1*device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
-                   +x0*y0*z0*t1*device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
-                   +x1*y1*z1*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
-                   +x0*y1*z1*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
-                   +x1*y0*z1*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
-                   +x0*y0*z1*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
-                   +x1*y1*z0*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
-                   +x0*y1*z0*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
-                   +x1*y0*z0*t0*device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
-                   +x0*y0*z0*t0*device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO;
+        float rho = x1*y1*z1*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
+                   +x0*y1*z1*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
+                   +x1*y0*z1*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
+                   +x0*y0*z1*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
+                   +x1*y1*z0*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
+                   +x0*y1*z0*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
+                   +x1*y0*z0*t1*d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
+                   +x0*y0*z0*t1*d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
+                   +x1*y1*z1*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
+                   +x0*y1*z1*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].RHO
+                   +x1*y0*z1*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
+                   +x0*y0*z1*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].RHO
+                   +x1*y1*z0*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
+                   +x0*y1*z0*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].RHO
+                   +x1*y0*z0*t0*d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO
+                   +x0*y0*z0*t0*d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].RHO;
 
         // Optimize memory access by caching meteorological data points
         FlexPres met_p0[8], met_p1[8];
@@ -209,23 +209,23 @@ __global__ void advectParticlesWithVTK(
         int safe_yidx = min(yidx, dimY_GFS - 2);    // Ensure yidx+1 is valid
         int safe_zidx = min(zidx, dimZ_GFS - 2);    // Ensure zidx+1 is valid
         
-        met_p0[0] = device_meteorological_flex_pres0[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
-        met_p0[1] = device_meteorological_flex_pres0[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
-        met_p0[2] = device_meteorological_flex_pres0[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
-        met_p0[3] = device_meteorological_flex_pres0[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
-        met_p0[4] = device_meteorological_flex_pres0[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
-        met_p0[5] = device_meteorological_flex_pres0[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
-        met_p0[6] = device_meteorological_flex_pres0[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
-        met_p0[7] = device_meteorological_flex_pres0[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
+        met_p0[0] = d_pressure_past[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
+        met_p0[1] = d_pressure_past[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
+        met_p0[2] = d_pressure_past[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
+        met_p0[3] = d_pressure_past[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
+        met_p0[4] = d_pressure_past[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
+        met_p0[5] = d_pressure_past[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
+        met_p0[6] = d_pressure_past[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
+        met_p0[7] = d_pressure_past[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
         
-        met_p1[0] = device_meteorological_flex_pres1[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
-        met_p1[1] = device_meteorological_flex_pres1[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
-        met_p1[2] = device_meteorological_flex_pres1[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
-        met_p1[3] = device_meteorological_flex_pres1[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
-        met_p1[4] = device_meteorological_flex_pres1[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
-        met_p1[5] = device_meteorological_flex_pres1[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
-        met_p1[6] = device_meteorological_flex_pres1[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
-        met_p1[7] = device_meteorological_flex_pres1[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
+        met_p1[0] = d_pressure_future[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
+        met_p1[1] = d_pressure_future[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx)];
+        met_p1[2] = d_pressure_future[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
+        met_p1[3] = d_pressure_future[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx)];
+        met_p1[4] = d_pressure_future[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
+        met_p1[5] = d_pressure_future[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx) * dimZ_GFS + (safe_zidx+1)];
+        met_p1[6] = d_pressure_future[(safe_xidx) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
+        met_p1[7] = d_pressure_future[(safe_xidx+1) * dimY_GFS * dimZ_GFS + (safe_yidx+1) * dimZ_GFS + (safe_zidx+1)];
         
         // Debug disabled for performance
 
@@ -252,173 +252,173 @@ __global__ void advectParticlesWithVTK(
         float dx = 0, dy = 0;
         float dxt = 0, dyt = 0;
 
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU;
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU;
 
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU;
-
-        uusig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
-
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU;
-
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU;
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].UU;
 
         uusig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
 
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU;
 
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV;
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].UU;
 
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV;
+        uusig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
+
+
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV;
+
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].VV;
 
         vvsig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
 
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV;
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV;
 
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV;
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].VV;
 
         vvsig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
 
 
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW;
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW;
 
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW;
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx)].WW;
 
         wwsig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
 
-        s1 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            *device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW;
+        s1 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            *d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW;
 
-        s2 = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres0[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
-            +device_meteorological_flex_pres1[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW;
+        s2 = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_past[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW
+            +d_pressure_future[(xidx+1) * dimY_GFS * dimZ_GFS + (yidx+1) * dimZ_GFS + (zidx+1)].WW;
 
         wwsig += 0.5*sqrt((s1-s2*s2/8.0)/7.0);
 
@@ -690,9 +690,9 @@ __global__ void advectParticlesWithVTK(
         p.y += dy*s1; //!!
         
 
-        if(p.z > ks.flex_hgt[dimZ_GFS-1]) {
+        if(p.z > ks.height_levels[dimZ_GFS-1]) {
             float old_z_clamp = p.z;
-            p.z = ks.flex_hgt[dimZ_GFS-1]*0.999999;
+            p.z = ks.height_levels[dimZ_GFS-1]*0.999999;
         }
 
         float prob = 0.0;
@@ -716,12 +716,12 @@ __global__ void advectParticlesWithVTK(
         float clouds_v, clouds_h;
 
         if(t0<=0.5) {
-            clouds_v = device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].CLDS;
-            clouds_h = device_meteorological_flex_unis0[(xidx) * dimY_GFS + (yidx)].CLDH;
+            clouds_v = d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].CLDS;
+            clouds_h = d_surface_past[(xidx) * dimY_GFS + (yidx)].CLDH;
         }
         else{
-            clouds_v = device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].CLDS;
-            clouds_h = device_meteorological_flex_unis1[(xidx) * dimY_GFS + (yidx)].CLDH;
+            clouds_v = d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].CLDS;
+            clouds_h = d_surface_future[(xidx) * dimY_GFS + (yidx)].CLDH;
         }
 
             float wet_removal = 0.0f;
@@ -754,8 +754,8 @@ __global__ void advectParticlesWithVTK(
                         wetscav = weta * powf(prec, wetb);
                     } else {
                         float act_temp = (t0 <= 0.5f)
-                            ? device_meteorological_flex_pres0[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].TT
-                            : device_meteorological_flex_pres1[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].TT;
+                            ? d_pressure_past[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].TT
+                            : d_pressure_future[(xidx) * dimY_GFS * dimZ_GFS + (yidx) * dimZ_GFS + (zidx)].TT;
                         float cl = 2.0e-7f * powf(prec, 0.36f);
                         float S_i = (p.radi > 1.0e-10f)
                             ? (0.9f / cl)

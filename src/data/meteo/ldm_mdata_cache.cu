@@ -522,13 +522,13 @@ bool LDM::preloadAllEKIMeteorologicalData() {
         
         std::cout << "Initial meteorological data loaded (index 0)" << std::endl;
 
-        // Allocate and initialize d_flex_hgt for kernel usage
-        if (d_flex_hgt == nullptr) {
-            std::cout << "Allocating d_flex_hgt for kernel usage..." << std::endl;
-            cudaError_t hgt_alloc_err = cudaMalloc(&d_flex_hgt, g_eki_meteo.height_size);
+        // Allocate and initialize d_height_levels for kernel usage
+        if (d_height_levels == nullptr) {
+            std::cout << "Allocating d_height_levels for kernel usage..." << std::endl;
+            cudaError_t hgt_alloc_err = cudaMalloc(&d_height_levels, g_eki_meteo.height_size);
             if (hgt_alloc_err != cudaSuccess) {
                 std::cerr << Color::RED << "[ERROR] " << Color::RESET
-                          << "Failed to allocate d_flex_hgt: "
+                          << "Failed to allocate d_height_levels: "
                           << cudaGetErrorString(hgt_alloc_err) << std::endl;
                 g_eki_meteo.cleanup();
                 return false;
@@ -538,18 +538,18 @@ bool LDM::preloadAllEKIMeteorologicalData() {
             float* first_hgt_ptr;
             cudaMemcpy(&first_hgt_ptr, &g_eki_meteo.d_height_array[0],
                        sizeof(float*), cudaMemcpyDeviceToHost);
-            cudaError_t hgt_copy_err = cudaMemcpy(d_flex_hgt, first_hgt_ptr,
+            cudaError_t hgt_copy_err = cudaMemcpy(d_height_levels, first_hgt_ptr,
                                                   g_eki_meteo.height_size, cudaMemcpyDeviceToDevice);
             if (hgt_copy_err != cudaSuccess) {
                 std::cerr << Color::RED << "[ERROR] " << Color::RESET
-                          << "Failed to initialize d_flex_hgt: "
+                          << "Failed to initialize d_height_levels: "
                           << cudaGetErrorString(hgt_copy_err) << std::endl;
-                cudaFree(d_flex_hgt);
-                d_flex_hgt = nullptr;
+                cudaFree(d_height_levels);
+                d_height_levels = nullptr;
                 g_eki_meteo.cleanup();
                 return false;
             }
-            std::cout << "d_flex_hgt allocated and initialized ("
+            std::cout << "d_height_levels allocated and initialized ("
                       << (g_eki_meteo.height_size / 1024.0) << " KB)" << std::endl;
         }
     }
