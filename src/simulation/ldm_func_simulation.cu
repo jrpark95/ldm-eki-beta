@@ -183,14 +183,14 @@ void LDM::runSimulation(){
         ks.settling_vel = vsetaver;
         ks.cunningham_fac = cunningham;
         ks.T_matrix = d_T_matrix;
-        ks.flex_hgt = d_flex_hgt;
+        ks.height_levels = d_height_levels;
 
         advectParticles<<<blocks, threadsPerBlock>>>
         (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
-            device_meteorological_flex_unis0,
-            device_meteorological_flex_pres0,
-            device_meteorological_flex_unis1,
-            device_meteorological_flex_pres1,
+            d_surface_past,
+            d_pressure_past,
+            d_surface_future,
+            d_pressure_future,
             ks);
         cudaDeviceSynchronize();
         CHECK_KERNEL_ERROR();
@@ -297,7 +297,7 @@ void LDM::runSimulation(){
  * - Past index: floor(currentTime / time_interval)
  * - Future index: past_index + 1
  * - Automatic range checking and boundary handling
- * - Height field (d_flex_hgt) synchronized with pressure-level data
+ * - Height field (d_g_height_levels) synchronized with pressure-level data
  * - Device-to-device memcpy from cache to working buffers
  *
  * Ensemble vs. Single Mode:
@@ -429,19 +429,19 @@ void LDM::runSimulation_eki(){
         
         // Range check and meteorological data update
         if (past_meteo_index >= 0 && past_meteo_index < g_eki_meteo.num_time_steps) {
-            // Past meteorological data (device_meteorological_flex_pres0, unis0)
+            // Past meteorological data (d_pressure_past, unis0)
             FlexPres* past_pres_ptr;
             FlexUnis* past_unis_ptr;
             
-            cudaMemcpy(&past_pres_ptr, &g_eki_meteo.device_flex_pres_data[past_meteo_index], 
+            cudaMemcpy(&past_pres_ptr, &g_eki_meteo.d_pressure_array[past_meteo_index], 
                        sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&past_unis_ptr, &g_eki_meteo.device_flex_unis_data[past_meteo_index], 
+            cudaMemcpy(&past_unis_ptr, &g_eki_meteo.d_surface_array[past_meteo_index], 
                        sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
             
-            cudaMemcpy(device_meteorological_flex_pres0, past_pres_ptr,
-                       g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-            cudaMemcpy(device_meteorological_flex_unis0, past_unis_ptr,
-                       g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_pressure_past, past_pres_ptr,
+                       g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_surface_past, past_unis_ptr,
+                       g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
 
             // DEBUG: Verify GPU meteorological data at first timestep
             if (timestep == 0) {
@@ -456,9 +456,9 @@ void LDM::runSimulation_eki(){
                 int idx1 = (test_xidx+1) * dimY_GFS * dimZ_GFS + test_yidx * dimZ_GFS + test_zidx;
                 int idx2 = test_xidx * dimY_GFS * dimZ_GFS + (test_yidx+1) * dimZ_GFS + test_zidx;
 
-                cudaMemcpy(sample_pres, &device_meteorological_flex_pres0[idx0], sizeof(FlexPres), cudaMemcpyDeviceToHost);
-                cudaMemcpy(sample_pres+1, &device_meteorological_flex_pres0[idx1], sizeof(FlexPres), cudaMemcpyDeviceToHost);
-                cudaMemcpy(sample_pres+2, &device_meteorological_flex_pres0[idx2], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres, &d_pressure_past[idx0], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres+1, &d_pressure_past[idx1], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres+2, &d_pressure_past[idx2], sizeof(FlexPres), cudaMemcpyDeviceToHost);
 
                 extern std::ofstream* g_log_file;
                 if (g_log_file && g_log_file->is_open()) {
@@ -472,21 +472,21 @@ void LDM::runSimulation_eki(){
             }
 
             // Update height data as well
-            flex_hgt = g_eki_meteo.host_flex_hgt_data[past_meteo_index];
+            g_height_levels = g_eki_meteo.host_g_height_levels_data[past_meteo_index];
 
 #ifdef DEBUG
             // Verify height data at first timestep only
             if (timestep == 0) {
                 printf("[DEBUG] Timestep %d: Index %d height data first 5 values: ", timestep, past_meteo_index);
-                for (int i = 0; i < std::min(5, (int)flex_hgt.size()); i++) {
-                    printf("%.1f ", flex_hgt[i]);
+                for (int i = 0; i < std::min(5, (int)g_height_levels.size()); i++) {
+                    printf("%.1f ", g_height_levels[i]);
                 }
-                printf("... %.1f\n", flex_hgt[flex_hgt.size()-1]);
+                printf("... %.1f\n", g_height_levels[g_height_levels.size()-1]);
             }
 #endif
             
             // Copy height data to GPU memory
-            cudaError_t hgt_err = cudaMemcpy(d_flex_hgt, flex_hgt.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+            cudaError_t hgt_err = cudaMemcpy(d_g_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
             if (hgt_err != cudaSuccess) {
                 // Log to file only (collected by Kernel Error Collector for batch reporting)
                 extern std::ofstream* g_log_file;
@@ -497,35 +497,35 @@ void LDM::runSimulation_eki(){
             }
         }
 
-        // Future meteorological data (device_meteorological_flex_pres1, unis1)
+        // Future meteorological data (d_pressure_future, unis1)
         if (future_meteo_index >= 0 && future_meteo_index < g_eki_meteo.num_time_steps) {
             FlexPres* future_pres_ptr;
             FlexUnis* future_unis_ptr;
             
-            cudaMemcpy(&future_pres_ptr, &g_eki_meteo.device_flex_pres_data[future_meteo_index], 
+            cudaMemcpy(&future_pres_ptr, &g_eki_meteo.d_pressure_array[future_meteo_index], 
                        sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&future_unis_ptr, &g_eki_meteo.device_flex_unis_data[future_meteo_index], 
+            cudaMemcpy(&future_unis_ptr, &g_eki_meteo.d_surface_array[future_meteo_index], 
                        sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
             
-            cudaMemcpy(device_meteorological_flex_pres1, future_pres_ptr, 
-                       g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-            cudaMemcpy(device_meteorological_flex_unis1, future_unis_ptr, 
-                       g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_pressure_future, future_pres_ptr, 
+                       g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_surface_future, future_unis_ptr, 
+                       g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
         } else {
             // Last time period: Set future data same as past data (prevent extrapolation)
             if (past_meteo_index >= 0 && past_meteo_index < g_eki_meteo.num_time_steps) {
                 FlexPres* past_pres_ptr;
                 FlexUnis* past_unis_ptr;
                 
-                cudaMemcpy(&past_pres_ptr, &g_eki_meteo.device_flex_pres_data[past_meteo_index], 
+                cudaMemcpy(&past_pres_ptr, &g_eki_meteo.d_pressure_array[past_meteo_index], 
                            sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-                cudaMemcpy(&past_unis_ptr, &g_eki_meteo.device_flex_unis_data[past_meteo_index], 
+                cudaMemcpy(&past_unis_ptr, &g_eki_meteo.d_surface_array[past_meteo_index], 
                            sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
                 
-                cudaMemcpy(device_meteorological_flex_pres1, past_pres_ptr, 
-                           g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-                cudaMemcpy(device_meteorological_flex_unis1, past_unis_ptr, 
-                           g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+                cudaMemcpy(d_pressure_future, past_pres_ptr, 
+                           g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+                cudaMemcpy(d_surface_future, past_unis_ptr, 
+                           g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
             }
         }
 
@@ -582,26 +582,26 @@ void LDM::runSimulation_eki(){
         ks.settling_vel = vsetaver;
         ks.cunningham_fac = cunningham;
         ks.T_matrix = d_T_matrix;
-        ks.flex_hgt = d_flex_hgt;
+        ks.height_levels = d_height_levels;
 
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
             int total_particles = part.size();
             advectParticlesEnsemble<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
-                device_meteorological_flex_unis0,
-                device_meteorological_flex_pres0,
-                device_meteorological_flex_unis1,
-                device_meteorological_flex_pres1,
+                d_surface_past,
+                d_pressure_past,
+                d_surface_future,
+                d_pressure_future,
                 total_particles,
                 ks);
         } else {
             advectParticles<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
-                device_meteorological_flex_unis0,
-                device_meteorological_flex_pres0,
-                device_meteorological_flex_unis1,
-                device_meteorological_flex_pres1,
+                d_surface_past,
+                d_pressure_past,
+                d_surface_future,
+                d_pressure_future,
                 ks);
         }
         cudaDeviceSynchronize();
@@ -877,19 +877,19 @@ void LDM::runSimulation_eki_dump(){
         
         // Range check and meteorological data update
         if (past_meteo_index >= 0 && past_meteo_index < g_eki_meteo.num_time_steps) {
-            // Past meteorological data (device_meteorological_flex_pres0, unis0)
+            // Past meteorological data (d_pressure_past, unis0)
             FlexPres* past_pres_ptr;
             FlexUnis* past_unis_ptr;
             
-            cudaMemcpy(&past_pres_ptr, &g_eki_meteo.device_flex_pres_data[past_meteo_index], 
+            cudaMemcpy(&past_pres_ptr, &g_eki_meteo.d_pressure_array[past_meteo_index], 
                        sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&past_unis_ptr, &g_eki_meteo.device_flex_unis_data[past_meteo_index], 
+            cudaMemcpy(&past_unis_ptr, &g_eki_meteo.d_surface_array[past_meteo_index], 
                        sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
             
-            cudaMemcpy(device_meteorological_flex_pres0, past_pres_ptr,
-                       g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-            cudaMemcpy(device_meteorological_flex_unis0, past_unis_ptr,
-                       g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_pressure_past, past_pres_ptr,
+                       g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_surface_past, past_unis_ptr,
+                       g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
 
             // DEBUG: Verify GPU meteorological data at first timestep
             if (timestep == 0) {
@@ -904,9 +904,9 @@ void LDM::runSimulation_eki_dump(){
                 int idx1 = (test_xidx+1) * dimY_GFS * dimZ_GFS + test_yidx * dimZ_GFS + test_zidx;
                 int idx2 = test_xidx * dimY_GFS * dimZ_GFS + (test_yidx+1) * dimZ_GFS + test_zidx;
 
-                cudaMemcpy(sample_pres, &device_meteorological_flex_pres0[idx0], sizeof(FlexPres), cudaMemcpyDeviceToHost);
-                cudaMemcpy(sample_pres+1, &device_meteorological_flex_pres0[idx1], sizeof(FlexPres), cudaMemcpyDeviceToHost);
-                cudaMemcpy(sample_pres+2, &device_meteorological_flex_pres0[idx2], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres, &d_pressure_past[idx0], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres+1, &d_pressure_past[idx1], sizeof(FlexPres), cudaMemcpyDeviceToHost);
+                cudaMemcpy(sample_pres+2, &d_pressure_past[idx2], sizeof(FlexPres), cudaMemcpyDeviceToHost);
 
                 extern std::ofstream* g_log_file;
                 if (g_log_file && g_log_file->is_open()) {
@@ -920,21 +920,21 @@ void LDM::runSimulation_eki_dump(){
             }
 
             // Update height data as well
-            flex_hgt = g_eki_meteo.host_flex_hgt_data[past_meteo_index];
+            g_height_levels = g_eki_meteo.host_g_height_levels_data[past_meteo_index];
 
 #ifdef DEBUG
             // Verify height data at first timestep only
             if (timestep == 0) {
                 printf("[DEBUG] Timestep %d: Index %d height data first 5 values: ", timestep, past_meteo_index);
-                for (int i = 0; i < std::min(5, (int)flex_hgt.size()); i++) {
-                    printf("%.1f ", flex_hgt[i]);
+                for (int i = 0; i < std::min(5, (int)g_height_levels.size()); i++) {
+                    printf("%.1f ", g_height_levels[i]);
                 }
-                printf("... %.1f\n", flex_hgt[flex_hgt.size()-1]);
+                printf("... %.1f\n", g_height_levels[g_height_levels.size()-1]);
             }
 #endif
             
             // Copy height data to GPU memory
-            cudaError_t hgt_err = cudaMemcpy(d_flex_hgt, flex_hgt.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+            cudaError_t hgt_err = cudaMemcpy(d_g_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
             if (hgt_err != cudaSuccess) {
                 // Log to file only (collected by Kernel Error Collector for batch reporting)
                 extern std::ofstream* g_log_file;
@@ -945,35 +945,35 @@ void LDM::runSimulation_eki_dump(){
             }
         }
 
-        // Future meteorological data (device_meteorological_flex_pres1, unis1)
+        // Future meteorological data (d_pressure_future, unis1)
         if (future_meteo_index >= 0 && future_meteo_index < g_eki_meteo.num_time_steps) {
             FlexPres* future_pres_ptr;
             FlexUnis* future_unis_ptr;
             
-            cudaMemcpy(&future_pres_ptr, &g_eki_meteo.device_flex_pres_data[future_meteo_index], 
+            cudaMemcpy(&future_pres_ptr, &g_eki_meteo.d_pressure_array[future_meteo_index], 
                        sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&future_unis_ptr, &g_eki_meteo.device_flex_unis_data[future_meteo_index], 
+            cudaMemcpy(&future_unis_ptr, &g_eki_meteo.d_surface_array[future_meteo_index], 
                        sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
             
-            cudaMemcpy(device_meteorological_flex_pres1, future_pres_ptr, 
-                       g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-            cudaMemcpy(device_meteorological_flex_unis1, future_unis_ptr, 
-                       g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_pressure_future, future_pres_ptr, 
+                       g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_surface_future, future_unis_ptr, 
+                       g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
         } else {
             // Last time period: Set future data same as past data (prevent extrapolation)
             if (past_meteo_index >= 0 && past_meteo_index < g_eki_meteo.num_time_steps) {
                 FlexPres* past_pres_ptr;
                 FlexUnis* past_unis_ptr;
                 
-                cudaMemcpy(&past_pres_ptr, &g_eki_meteo.device_flex_pres_data[past_meteo_index], 
+                cudaMemcpy(&past_pres_ptr, &g_eki_meteo.d_pressure_array[past_meteo_index], 
                            sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-                cudaMemcpy(&past_unis_ptr, &g_eki_meteo.device_flex_unis_data[past_meteo_index], 
+                cudaMemcpy(&past_unis_ptr, &g_eki_meteo.d_surface_array[past_meteo_index], 
                            sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
                 
-                cudaMemcpy(device_meteorological_flex_pres1, past_pres_ptr, 
-                           g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-                cudaMemcpy(device_meteorological_flex_unis1, past_unis_ptr, 
-                           g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+                cudaMemcpy(d_pressure_future, past_pres_ptr, 
+                           g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+                cudaMemcpy(d_surface_future, past_unis_ptr, 
+                           g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
             }
         }
 
@@ -1030,7 +1030,7 @@ void LDM::runSimulation_eki_dump(){
         ks.settling_vel = vsetaver;
         ks.cunningham_fac = cunningham;
         ks.T_matrix = d_T_matrix;
-        ks.flex_hgt = d_flex_hgt;
+        ks.height_levels = d_height_levels;
 
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
@@ -1038,20 +1038,20 @@ void LDM::runSimulation_eki_dump(){
             int total_particles = part.size();
             advectParticlesEnsembleWithVTK<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
-                device_meteorological_flex_unis0,
-                device_meteorological_flex_pres0,
-                device_meteorological_flex_unis1,
-                device_meteorological_flex_pres1,
+                d_surface_past,
+                d_pressure_past,
+                d_surface_future,
+                d_pressure_future,
                 total_particles,
                 ks);
         } else {
             // Single mode: process d_nop particles
             advectParticlesWithVTK<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
-                device_meteorological_flex_unis0,
-                device_meteorological_flex_pres0,
-                device_meteorological_flex_unis1,
-                device_meteorological_flex_pres1,
+                d_surface_past,
+                d_pressure_past,
+                d_surface_future,
+                d_pressure_future,
                 ks);
         }
         cudaDeviceSynchronize();

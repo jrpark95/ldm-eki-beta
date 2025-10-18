@@ -305,14 +305,14 @@ bool LDM::preloadAllEKIMeteorologicalData() {
 
     // Set metadata
     g_eki_meteo.num_time_steps = num_files;
-    g_eki_meteo.pres_data_size = (dimX_GFS + 1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres);
-    g_eki_meteo.unis_data_size = (dimX_GFS + 1) * dimY_GFS * sizeof(FlexUnis);
-    g_eki_meteo.hgt_data_size = dimZ_GFS * sizeof(float);
+    g_eki_meteo.pressure_size = (dimX_GFS + 1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres);
+    g_eki_meteo.surface_size = (dimX_GFS + 1) * dimY_GFS * sizeof(FlexUnis);
+    g_eki_meteo.height_size = dimZ_GFS * sizeof(float);
 
     // Initialize host memory vectors
-    g_eki_meteo.host_flex_pres_data.resize(num_files);
-    g_eki_meteo.host_flex_unis_data.resize(num_files);
-    g_eki_meteo.host_flex_hgt_data.resize(num_files);
+    g_eki_meteo.h_pressure.resize(num_files);
+    g_eki_meteo.h_surface.resize(num_files);
+    g_eki_meteo.h_height.resize(num_files);
 
     std::cout << "\n" << Color::CYAN << "[METEO] " << Color::RESET
               << "Parallel CPU loading: " << Color::BOLD << num_files << Color::RESET << " files\n";
@@ -336,9 +336,9 @@ bool LDM::preloadAllEKIMeteorologicalData() {
             bool success = this->loadSingleMeteoFile(i, pres_data, unis_data, hgt_data);
             if (success) {
                 std::lock_guard<std::mutex> lock(completion_mutex);
-                g_eki_meteo.host_flex_pres_data[i] = pres_data;
-                g_eki_meteo.host_flex_unis_data[i] = unis_data;
-                g_eki_meteo.host_flex_hgt_data[i] = hgt_data;
+                g_eki_meteo.h_pressure[i] = pres_data;
+                g_eki_meteo.h_surface[i] = unis_data;
+                g_eki_meteo.h_height[i] = hgt_data;
                 results[i] = true;
                 completed_files++;
                 std::cout << "Meteorological data file " << i << ".txt loaded successfully ("
@@ -383,9 +383,9 @@ bool LDM::preloadAllEKIMeteorologicalData() {
     auto gpu_start_time = std::chrono::high_resolution_clock::now();
     
     // Allocate GPU memory pointer arrays
-    cudaError_t err1 = cudaMalloc((void**)&g_eki_meteo.device_flex_pres_data, num_files * sizeof(FlexPres*));
-    cudaError_t err2 = cudaMalloc((void**)&g_eki_meteo.device_flex_unis_data, num_files * sizeof(FlexUnis*));
-    cudaError_t err3 = cudaMalloc((void**)&g_eki_meteo.device_flex_hgt_data, num_files * sizeof(float*));
+    cudaError_t err1 = cudaMalloc((void**)&g_eki_meteo.d_pressure_array, num_files * sizeof(FlexPres*));
+    cudaError_t err2 = cudaMalloc((void**)&g_eki_meteo.d_surface_array, num_files * sizeof(FlexUnis*));
+    cudaError_t err3 = cudaMalloc((void**)&g_eki_meteo.d_height_array, num_files * sizeof(float*));
     
     if (err1 != cudaSuccess || err2 != cudaSuccess || err3 != cudaSuccess) {
         std::cerr << Color::RED << Color::BOLD << "[ERROR] " << Color::RESET
@@ -403,39 +403,39 @@ bool LDM::preloadAllEKIMeteorologicalData() {
     
     for (int i = 0; i < num_files; i++) {
         // Pres data
-        if (cudaMalloc((void**)&temp_pres_ptrs[i], g_eki_meteo.pres_data_size) != cudaSuccess) {
+        if (cudaMalloc((void**)&temp_pres_ptrs[i], g_eki_meteo.pressure_size) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Pres memory allocation failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
         }
-        if (cudaMemcpy(temp_pres_ptrs[i], g_eki_meteo.host_flex_pres_data[i], 
-                       g_eki_meteo.pres_data_size, cudaMemcpyHostToDevice) != cudaSuccess) {
+        if (cudaMemcpy(temp_pres_ptrs[i], g_eki_meteo.h_pressure[i], 
+                       g_eki_meteo.pressure_size, cudaMemcpyHostToDevice) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Pres data transfer failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
         }
         
         // Unis data
-        if (cudaMalloc((void**)&temp_unis_ptrs[i], g_eki_meteo.unis_data_size) != cudaSuccess) {
+        if (cudaMalloc((void**)&temp_unis_ptrs[i], g_eki_meteo.surface_size) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Unis memory allocation failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
         }
-        if (cudaMemcpy(temp_unis_ptrs[i], g_eki_meteo.host_flex_unis_data[i], 
-                       g_eki_meteo.unis_data_size, cudaMemcpyHostToDevice) != cudaSuccess) {
+        if (cudaMemcpy(temp_unis_ptrs[i], g_eki_meteo.h_surface[i], 
+                       g_eki_meteo.surface_size, cudaMemcpyHostToDevice) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Unis data transfer failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
         }
         
         // Height data
-        if (cudaMalloc((void**)&temp_hgt_ptrs[i], g_eki_meteo.hgt_data_size) != cudaSuccess) {
+        if (cudaMalloc((void**)&temp_hgt_ptrs[i], g_eki_meteo.height_size) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Height memory allocation failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
         }
-        if (cudaMemcpy(temp_hgt_ptrs[i], g_eki_meteo.host_flex_hgt_data[i].data(), 
-                       g_eki_meteo.hgt_data_size, cudaMemcpyHostToDevice) != cudaSuccess) {
+        if (cudaMemcpy(temp_hgt_ptrs[i], g_eki_meteo.h_height[i].data(), 
+                       g_eki_meteo.height_size, cudaMemcpyHostToDevice) != cudaSuccess) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "GPU Height data transfer failed (file " << i << ")" << std::endl;
             gpu_allocation_success = false;
             break;
@@ -456,11 +456,11 @@ bool LDM::preloadAllEKIMeteorologicalData() {
     }
 
     // Copy pointer arrays to GPU
-    err1 = cudaMemcpy(g_eki_meteo.device_flex_pres_data, temp_pres_ptrs.data(),
+    err1 = cudaMemcpy(g_eki_meteo.d_pressure_array, temp_pres_ptrs.data(),
                       num_files * sizeof(FlexPres*), cudaMemcpyHostToDevice);
-    err2 = cudaMemcpy(g_eki_meteo.device_flex_unis_data, temp_unis_ptrs.data(),
+    err2 = cudaMemcpy(g_eki_meteo.d_surface_array, temp_unis_ptrs.data(),
                       num_files * sizeof(FlexUnis*), cudaMemcpyHostToDevice);
-    err3 = cudaMemcpy(g_eki_meteo.device_flex_hgt_data, temp_hgt_ptrs.data(),
+    err3 = cudaMemcpy(g_eki_meteo.d_height_array, temp_hgt_ptrs.data(),
                       num_files * sizeof(float*), cudaMemcpyHostToDevice);
 
     if (err1 != cudaSuccess || err2 != cudaSuccess || err3 != cudaSuccess) {
@@ -474,26 +474,26 @@ bool LDM::preloadAllEKIMeteorologicalData() {
     auto gpu_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gpu_end_time - gpu_start_time);
     
     // Slot 0 (for past data)
-    cudaError_t err_alloc1 = cudaMalloc((void**)&g_eki_meteo.ldm_pres0_slot, g_eki_meteo.pres_data_size);
-    cudaError_t err_alloc2 = cudaMalloc((void**)&g_eki_meteo.ldm_unis0_slot, g_eki_meteo.unis_data_size);
+    cudaError_t err_alloc1 = cudaMalloc((void**)&g_eki_meteo.d_pressure_past, g_eki_meteo.pressure_size);
+    cudaError_t err_alloc2 = cudaMalloc((void**)&g_eki_meteo.d_surface_past, g_eki_meteo.surface_size);
     
     // Slot 1 (for future data)  
-    cudaError_t err_alloc3 = cudaMalloc((void**)&g_eki_meteo.ldm_pres1_slot, g_eki_meteo.pres_data_size);
-    cudaError_t err_alloc4 = cudaMalloc((void**)&g_eki_meteo.ldm_unis1_slot, g_eki_meteo.unis_data_size);
+    cudaError_t err_alloc3 = cudaMalloc((void**)&g_eki_meteo.d_pressure_future, g_eki_meteo.pressure_size);
+    cudaError_t err_alloc4 = cudaMalloc((void**)&g_eki_meteo.d_surface_future, g_eki_meteo.surface_size);
     
     // Copy pointers to global variables
-    device_meteorological_flex_pres0 = g_eki_meteo.ldm_pres0_slot;
-    device_meteorological_flex_unis0 = g_eki_meteo.ldm_unis0_slot;
-    device_meteorological_flex_pres1 = g_eki_meteo.ldm_pres1_slot;
-    device_meteorological_flex_unis1 = g_eki_meteo.ldm_unis1_slot;
+    d_pressure_past = g_eki_meteo.d_pressure_past;
+    d_surface_past = g_eki_meteo.d_surface_past;
+    d_pressure_future = g_eki_meteo.d_pressure_future;
+    d_surface_future = g_eki_meteo.d_surface_future;
     
     if (err_alloc1 != cudaSuccess || err_alloc2 != cudaSuccess || 
         err_alloc3 != cudaSuccess || err_alloc4 != cudaSuccess) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET << "Failed to allocate existing LDM GPU memory slots" << std::endl;
-        std::cerr << "  device_meteorological_flex_pres0: " << cudaGetErrorString(err_alloc1) << std::endl;
-        std::cerr << "  device_meteorological_flex_unis0: " << cudaGetErrorString(err_alloc2) << std::endl;
-        std::cerr << "  device_meteorological_flex_pres1: " << cudaGetErrorString(err_alloc3) << std::endl;
-        std::cerr << "  device_meteorological_flex_unis1: " << cudaGetErrorString(err_alloc4) << std::endl;
+        std::cerr << "  d_pressure_past: " << cudaGetErrorString(err_alloc1) << std::endl;
+        std::cerr << "  d_surface_past: " << cudaGetErrorString(err_alloc2) << std::endl;
+        std::cerr << "  d_pressure_future: " << cudaGetErrorString(err_alloc3) << std::endl;
+        std::cerr << "  d_surface_future: " << cudaGetErrorString(err_alloc4) << std::endl;
         g_eki_meteo.cleanup();
         return false;
     }
@@ -503,29 +503,29 @@ bool LDM::preloadAllEKIMeteorologicalData() {
         FlexPres* first_pres_ptr;
         FlexUnis* first_unis_ptr;
         
-        cudaMemcpy(&first_pres_ptr, &g_eki_meteo.device_flex_pres_data[0], 
+        cudaMemcpy(&first_pres_ptr, &g_eki_meteo.d_pressure_array[0], 
                    sizeof(FlexPres*), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&first_unis_ptr, &g_eki_meteo.device_flex_unis_data[0], 
+        cudaMemcpy(&first_unis_ptr, &g_eki_meteo.d_surface_array[0], 
                    sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
         
         // Past slot
-        cudaMemcpy(g_eki_meteo.ldm_pres0_slot, first_pres_ptr, 
-                   g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(g_eki_meteo.ldm_unis0_slot, first_unis_ptr, 
-                   g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+        cudaMemcpy(g_eki_meteo.d_pressure_past, first_pres_ptr, 
+                   g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+        cudaMemcpy(g_eki_meteo.d_surface_past, first_unis_ptr, 
+                   g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
         
         // Future slot (initially same data)
-        cudaMemcpy(g_eki_meteo.ldm_pres1_slot, first_pres_ptr, 
-                   g_eki_meteo.pres_data_size, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(g_eki_meteo.ldm_unis1_slot, first_unis_ptr, 
-                   g_eki_meteo.unis_data_size, cudaMemcpyDeviceToDevice);
+        cudaMemcpy(g_eki_meteo.d_pressure_future, first_pres_ptr, 
+                   g_eki_meteo.pressure_size, cudaMemcpyDeviceToDevice);
+        cudaMemcpy(g_eki_meteo.d_surface_future, first_unis_ptr, 
+                   g_eki_meteo.surface_size, cudaMemcpyDeviceToDevice);
         
         std::cout << "Initial meteorological data loaded (index 0)" << std::endl;
 
         // Allocate and initialize d_flex_hgt for kernel usage
         if (d_flex_hgt == nullptr) {
             std::cout << "Allocating d_flex_hgt for kernel usage..." << std::endl;
-            cudaError_t hgt_alloc_err = cudaMalloc(&d_flex_hgt, g_eki_meteo.hgt_data_size);
+            cudaError_t hgt_alloc_err = cudaMalloc(&d_flex_hgt, g_eki_meteo.height_size);
             if (hgt_alloc_err != cudaSuccess) {
                 std::cerr << Color::RED << "[ERROR] " << Color::RESET
                           << "Failed to allocate d_flex_hgt: "
@@ -536,10 +536,10 @@ bool LDM::preloadAllEKIMeteorologicalData() {
 
             // Initialize with first height data
             float* first_hgt_ptr;
-            cudaMemcpy(&first_hgt_ptr, &g_eki_meteo.device_flex_hgt_data[0],
+            cudaMemcpy(&first_hgt_ptr, &g_eki_meteo.d_height_array[0],
                        sizeof(float*), cudaMemcpyDeviceToHost);
             cudaError_t hgt_copy_err = cudaMemcpy(d_flex_hgt, first_hgt_ptr,
-                                                  g_eki_meteo.hgt_data_size, cudaMemcpyDeviceToDevice);
+                                                  g_eki_meteo.height_size, cudaMemcpyDeviceToDevice);
             if (hgt_copy_err != cudaSuccess) {
                 std::cerr << Color::RED << "[ERROR] " << Color::RESET
                           << "Failed to initialize d_flex_hgt: "
@@ -550,7 +550,7 @@ bool LDM::preloadAllEKIMeteorologicalData() {
                 return false;
             }
             std::cout << "d_flex_hgt allocated and initialized ("
-                      << (g_eki_meteo.hgt_data_size / 1024.0) << " KB)" << std::endl;
+                      << (g_eki_meteo.height_size / 1024.0) << " KB)" << std::endl;
         }
     }
 
@@ -559,9 +559,9 @@ bool LDM::preloadAllEKIMeteorologicalData() {
     std::cout << "GPU transfer completed (" << gpu_duration.count() << "ms)\n";
     std::cout << "\nMetorological data preloading completed (" << (duration.count() + gpu_duration.count()) << "ms)\n";
     std::cout << "  Memory usage:\n";
-    std::cout << "    Pres data   : " << Color::BOLD << (g_eki_meteo.pres_data_size * num_files / 1024 / 1024) << " MB" << Color::RESET << "\n";
-    std::cout << "    Unis data   : " << Color::BOLD << (g_eki_meteo.unis_data_size * num_files / 1024 / 1024) << " MB" << Color::RESET << "\n";
-    std::cout << "    Height data : " << Color::BOLD << (g_eki_meteo.hgt_data_size * num_files / 1024) << " KB" << Color::RESET << "\n";
+    std::cout << "    Pres data   : " << Color::BOLD << (g_eki_meteo.pressure_size * num_files / 1024 / 1024) << " MB" << Color::RESET << "\n";
+    std::cout << "    Unis data   : " << Color::BOLD << (g_eki_meteo.surface_size * num_files / 1024 / 1024) << " MB" << Color::RESET << "\n";
+    std::cout << "    Height data : " << Color::BOLD << (g_eki_meteo.height_size * num_files / 1024) << " KB" << Color::RESET << "\n";
 
     return true;
 }

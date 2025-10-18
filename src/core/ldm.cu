@@ -27,7 +27,7 @@ MPIConfig g_mpi;                   // MPI/species configuration (legacy compatib
 EKIConfig g_eki;                   // EKI algorithm parameters and receptor settings
 ConfigReader g_config;             // Generic configuration file reader
 EKIMeteorologicalData g_eki_meteo; // Preloaded meteorology for EKI iterations
-std::vector<float> flex_hgt;       // Vertical height levels (host copy)
+std::vector<float> g_height_levels;  // Vertical height levels (host copy)
 
 // Log-only output stream (initialized in main_eki.cu, nullptr otherwise)
 std::ostream* g_logonly = nullptr;
@@ -78,16 +78,16 @@ LDM::LDM()
     , d_ensemble_dose(nullptr)
     , d_ensemble_particle_count(nullptr)
     , d_T_matrix(nullptr)
-    , d_flex_hgt(nullptr)
-    , device_meteorological_data_pres(nullptr)
-    , device_meteorological_data_unis(nullptr)
-    , device_meteorological_data_etas(nullptr)
-    , device_meteorological_flex_pres0(nullptr)
-    , device_meteorological_flex_pres1(nullptr)
-    , device_meteorological_flex_pres2(nullptr)
-    , device_meteorological_flex_unis0(nullptr)
-    , device_meteorological_flex_unis1(nullptr)
-    , device_meteorological_flex_unis2(nullptr)
+    , d_height_levels(nullptr)
+    , d_pres_legacy(nullptr)
+    , d_surf_legacy(nullptr)
+    , d_etas_legacy(nullptr)
+    , d_pressure_past(nullptr)
+    , d_pressure_future(nullptr)
+    , d_pressure_aux(nullptr)
+    , d_surface_past(nullptr)
+    , d_surface_future(nullptr)
+    , d_surface_aux(nullptr)
 {
     // Constructor body empty - all initialization in member initializer list
 }
@@ -113,9 +113,9 @@ LDM::~LDM() {
     }
 
     // Free height data GPU memory
-    if (d_flex_hgt != nullptr) {
-        cudaFree(d_flex_hgt);
-        d_flex_hgt = nullptr;
+    if (d_height_levels != nullptr) {
+        cudaFree(d_height_levels);
+        d_height_levels = nullptr;
     }
 
     // Other resources cleaned up by explicit cleanup functions:
@@ -175,29 +175,29 @@ void EKIMeteorologicalData::cleanup() {
 
     try {
         // Clean up host memory
-        for (size_t i = 0; i < host_flex_pres_data.size(); i++) {
-            if (host_flex_pres_data[i] != nullptr) {
-                delete[] host_flex_pres_data[i];
-                host_flex_pres_data[i] = nullptr;
+        for (size_t i = 0; i < h_pressure.size(); i++) {
+            if (h_pressure[i] != nullptr) {
+                delete[] h_pressure[i];
+                h_pressure[i] = nullptr;
             }
         }
-        for (size_t i = 0; i < host_flex_unis_data.size(); i++) {
-            if (host_flex_unis_data[i] != nullptr) {
-                delete[] host_flex_unis_data[i];
-                host_flex_unis_data[i] = nullptr;
+        for (size_t i = 0; i < h_surface.size(); i++) {
+            if (h_surface[i] != nullptr) {
+                delete[] h_surface[i];
+                h_surface[i] = nullptr;
             }
         }
-        host_flex_pres_data.clear();
-        host_flex_unis_data.clear();
-        host_flex_hgt_data.clear();
+        h_pressure.clear();
+        h_surface.clear();
+        h_height.clear();
 
         // Clean up GPU memory (order is important!)
 
         // First release individual GPU memory blocks
-        if (device_flex_pres_data && num_time_steps > 0) {
+        if (d_pressure_array && num_time_steps > 0) {
             // Get pointer array from GPU
             std::vector<FlexPres*> temp_pres_ptrs(num_time_steps);
-            cudaError_t err = cudaMemcpy(temp_pres_ptrs.data(), device_flex_pres_data,
+            cudaError_t err = cudaMemcpy(temp_pres_ptrs.data(), d_pressure_array,
                                        num_time_steps * sizeof(FlexPres*), cudaMemcpyDeviceToHost);
             if (err == cudaSuccess) {
                 for (int i = 0; i < num_time_steps; i++) {
@@ -206,13 +206,13 @@ void EKIMeteorologicalData::cleanup() {
                     }
                 }
             }
-            cudaFree(device_flex_pres_data);
-            device_flex_pres_data = nullptr;
+            cudaFree(d_pressure_array);
+            d_pressure_array = nullptr;
         }
 
-        if (device_flex_unis_data && num_time_steps > 0) {
+        if (d_surface_array && num_time_steps > 0) {
             std::vector<FlexUnis*> temp_unis_ptrs(num_time_steps);
-            cudaError_t err = cudaMemcpy(temp_unis_ptrs.data(), device_flex_unis_data,
+            cudaError_t err = cudaMemcpy(temp_unis_ptrs.data(), d_surface_array,
                                        num_time_steps * sizeof(FlexUnis*), cudaMemcpyDeviceToHost);
             if (err == cudaSuccess) {
                 for (int i = 0; i < num_time_steps; i++) {
@@ -221,13 +221,13 @@ void EKIMeteorologicalData::cleanup() {
                     }
                 }
             }
-            cudaFree(device_flex_unis_data);
-            device_flex_unis_data = nullptr;
+            cudaFree(d_surface_array);
+            d_surface_array = nullptr;
         }
 
-        if (device_flex_hgt_data && num_time_steps > 0) {
+        if (d_height_array && num_time_steps > 0) {
             std::vector<float*> temp_hgt_ptrs(num_time_steps);
-            cudaError_t err = cudaMemcpy(temp_hgt_ptrs.data(), device_flex_hgt_data,
+            cudaError_t err = cudaMemcpy(temp_hgt_ptrs.data(), d_height_array,
                                        num_time_steps * sizeof(float*), cudaMemcpyDeviceToHost);
             if (err == cudaSuccess) {
                 for (int i = 0; i < num_time_steps; i++) {
@@ -236,33 +236,33 @@ void EKIMeteorologicalData::cleanup() {
                     }
                 }
             }
-            cudaFree(device_flex_hgt_data);
-            device_flex_hgt_data = nullptr;
+            cudaFree(d_height_array);
+            d_height_array = nullptr;
         }
 
         // Reset metadata
         num_time_steps = 0;
-        pres_data_size = 0;
-        unis_data_size = 0;
-        hgt_data_size = 0;
+        pressure_size = 0;
+        surface_size = 0;
+        height_size = 0;
         is_initialized = false;
 
         // Clean up existing LDM GPU memory slots
-        if (ldm_pres0_slot) {
-            cudaFree(ldm_pres0_slot);
-            ldm_pres0_slot = nullptr;
+        if (d_pressure_past) {
+            cudaFree(d_pressure_past);
+            d_pressure_past = nullptr;
         }
-        if (ldm_unis0_slot) {
-            cudaFree(ldm_unis0_slot);
-            ldm_unis0_slot = nullptr;
+        if (d_surface_past) {
+            cudaFree(d_surface_past);
+            d_surface_past = nullptr;
         }
-        if (ldm_pres1_slot) {
-            cudaFree(ldm_pres1_slot);
-            ldm_pres1_slot = nullptr;
+        if (d_pressure_future) {
+            cudaFree(d_pressure_future);
+            d_pressure_future = nullptr;
         }
-        if (ldm_unis1_slot) {
-            cudaFree(ldm_unis1_slot);
-            ldm_unis1_slot = nullptr;
+        if (d_surface_future) {
+            cudaFree(d_surface_future);
+            d_surface_future = nullptr;
         }
 
     } catch (const std::exception& e) {

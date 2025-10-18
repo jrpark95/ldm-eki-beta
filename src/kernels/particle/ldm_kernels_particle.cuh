@@ -56,7 +56,7 @@
  *   - Maintains particle ordering
  *   - Handles PBL reflection (top/bottom)
  *
- * @note Uses global constants: d_nop, d_dt, d_flex_hgt[], T_const
+ * @note Uses global constants: d_nop, d_dt, d_height_levels[], T_const
  * @note Coordinate system: Grid indices → Lat/Lon conversion
  * @note PBL scheme: Hanna (1982) for unstable, stable, neutral
  *

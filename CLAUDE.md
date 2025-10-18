@@ -275,7 +275,6 @@ src/
 │   │   └── ldm_struct.cuh  - 데이터 구조체 정의
 │   └── meteo/              - 기상 데이터 관리
 │       ├── ldm_mdata_loading.cuh/cu
-│       ├── ldm_mdata_processing.cuh/cu
 │       └── ldm_mdata_cache.cuh/cu
 ├── physics/                 - 물리 모델
 │   ├── ldm_cram2.cuh/cu    - CRAM48 방사성 붕괴

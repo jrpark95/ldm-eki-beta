@@ -219,25 +219,25 @@ struct EKIMeteorologicalData {
     int num_time_steps = 0;  // Number of preloaded timesteps
 
     // Host memory: All timesteps cached in CPU RAM
-    std::vector<FlexPres*> host_flex_pres_data;       // Pressure-level fields
-    std::vector<FlexUnis*> host_flex_unis_data;       // Surface fields
-    std::vector<std::vector<float>> host_flex_hgt_data; // Height levels
+    std::vector<FlexPres*> h_pressure;       // Pressure-level fields
+    std::vector<FlexUnis*> h_surface;        // Surface fields
+    std::vector<std::vector<float>> h_height; // Height levels
 
     // Device memory: Array of GPU pointers (one per timestep)
-    FlexPres** device_flex_pres_data = nullptr;  // GPU pointer array
-    FlexUnis** device_flex_unis_data = nullptr;  // GPU pointer array
-    float** device_flex_hgt_data = nullptr;      // GPU pointer array
+    FlexPres** d_pressure_array = nullptr;  // GPU pointer array
+    FlexUnis** d_surface_array = nullptr;   // GPU pointer array
+    float** d_height_array = nullptr;       // GPU pointer array
 
     // Temporal interpolation buffers (past and future timesteps)
-    FlexPres* ldm_pres0_slot = nullptr;  // Past timestep buffer
-    FlexUnis* ldm_unis0_slot = nullptr;  // Past timestep buffer
-    FlexPres* ldm_pres1_slot = nullptr;  // Future timestep buffer
-    FlexUnis* ldm_unis1_slot = nullptr;  // Future timestep buffer
+    FlexPres* d_pressure_past = nullptr;    // Past timestep buffer
+    FlexUnis* d_surface_past = nullptr;     // Past timestep buffer
+    FlexPres* d_pressure_future = nullptr;  // Future timestep buffer
+    FlexUnis* d_surface_future = nullptr;   // Future timestep buffer
 
     // Memory allocation sizes (bytes)
-    size_t pres_data_size = 0;  // FlexPres structure size
-    size_t unis_data_size = 0;  // FlexUnis structure size
-    size_t hgt_data_size = 0;   // Height array size
+    size_t pressure_size = 0;  // FlexPres structure size
+    size_t surface_size = 0;   // FlexUnis structure size
+    size_t height_size = 0;    // Height array size
 
     // Initialization state flag (safety check)
     bool is_initialized = false;
@@ -255,7 +255,7 @@ extern MPIConfig g_mpi;
 extern EKIConfig g_eki;
 extern ConfigReader g_config;
 extern EKIMeteorologicalData g_eki_meteo;
-extern std::vector<float> flex_hgt;
+extern std::vector<float> g_height_levels;
 
 // Log file handle (declared in main_eki.cu)
 // Other modules can write directly to this for log-only output
@@ -315,22 +315,22 @@ class LDM
 {
 private:
 
-    PresData* device_meteorological_data_pres;  // Used in constructor/destructor
-    UnisData* device_meteorological_data_unis;  // Used in constructor/destructor
-    EtasData* device_meteorological_data_etas;  // Used in constructor/destructor
+    PresData* d_pres_legacy;  // Legacy format (used in constructor/destructor)
+    UnisData* d_surf_legacy;  // Legacy format (used in constructor/destructor)
+    EtasData* d_etas_legacy;  // Legacy format (used in constructor/destructor)
 
-    FlexUnis* device_meteorological_flex_unis0;
-    FlexPres* device_meteorological_flex_pres0;
-    FlexUnis* device_meteorological_flex_unis1;
-    FlexPres* device_meteorological_flex_pres1;
-    FlexUnis* device_meteorological_flex_unis2;
-    FlexPres* device_meteorological_flex_pres2;
+    FlexUnis* d_surface_past;
+    FlexPres* d_pressure_past;
+    FlexUnis* d_surface_future;
+    FlexPres* d_pressure_future;
+    FlexUnis* d_surface_aux;
+    FlexPres* d_pressure_aux;
 
     // CRAM decay matrix (GPU memory)
     float* d_T_matrix;  // Decay transition matrix [N_NUCLIDES × N_NUCLIDES]
 
     // Height data (GPU memory)
-    float* d_flex_hgt;  // Vertical height levels [dimZ_GFS = 50 elements]
+    float* d_height_levels;  // Vertical height levels [dimZ_GFS = 50 elements]
 
     // EKI observation system variables
     float* d_receptor_lats;         // GPU memory for receptor latitudes
@@ -671,25 +671,6 @@ GridConfig loadGridConfig();
 // MPI variables removed - using single process mode
 // g_mpi arrays now accessed with index 0 (PROCESS_INDEX)
 
-// void loadRadionuclideData() {
-//     std::vector<std::string> species_names = g_config.getStringArray("species_names");
-//     std::vector<float> decay_constants = g_config.getFloatArray("decay_constants");
-//     std::vector<float> deposition_velocities = g_config.getFloatArray("deposition_velocities");
-//     std::vector<float> particle_sizes = g_config.getFloatArray("particle_sizes");
-//     std::vector<float> particle_densities = g_config.getFloatArray("particle_densities");
-//     std::vector<float> size_standard_deviations = g_config.getFloatArray("size_standard_deviations");
-    
-//     for (int i = 0; i < 4 && i < species_names.size(); i++) {
-//         g_mpi.species[i] = species_names[i];
-//         g_mpi.decayConstants[i] = (i < decay_constants.size()) ? decay_constants[i] : 1.00e-6f;
-//         g_mpi.depositionVelocities[i] = (i < deposition_velocities.size()) ? deposition_velocities[i] : 0.01f;
-//         g_mpi.particleSizes[i] = (i < particle_sizes.size()) ? particle_sizes[i] : 0.6f;
-//         g_mpi.particleDensities[i] = (i < particle_densities.size()) ? particle_densities[i] : 2500.0f;
-//         g_mpi.sizeStandardDeviations[i] = (i < size_standard_deviations.size()) ? size_standard_deviations[i] : 0.01f;
-//     }
-// }
-// float __Z[720] = {0.0f, };
-
 
 // Note: ldm_cram2.cuh moved to early include section (after ldm_config.cuh) to provide N_NUCLIDES macro
 #include "../kernels/ldm_kernels.cuh"
@@ -700,7 +681,6 @@ GridConfig loadGridConfig();
 
 // Refactored meteorological data modules
 #include "../data/meteo/ldm_mdata_loading.cuh"
-#include "../data/meteo/ldm_mdata_processing.cuh"
 #include "../data/meteo/ldm_mdata_cache.cuh"
 
 // Refactored simulation modules

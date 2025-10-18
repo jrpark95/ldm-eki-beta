@@ -17,10 +17,10 @@
  *    - Files affected: 4 kernel files, ldm_cram2.cu, ldm_func_simulation.cu
  *
  * 2. Flex Height Levels (2025-10-16)
- *    - Previous: __device__ float d_flex_hgt[50];
+ *    - Previous: __device__ float d_height_levels[50];
  *    - Issue: "invalid device symbol" + "illegal memory access" in EKI mode
- *    - Solution: Migrated to LDM::d_flex_hgt via cudaMalloc()
- *    - Impact: All vertical interpolation now uses ks.flex_hgt pointer
+ *    - Solution: Migrated to LDM::d_height_levels via cudaMalloc()
+ *    - Impact: All vertical interpolation now uses ks.height_levels pointer
  *    - Files affected: 4 kernel files, ldm_mdata_loading.cu, ldm_mdata_cache.cu
  *
  * @architecture Old vs. New:
@@ -28,15 +28,15 @@
  * Old (RDC mode):
  * @code
  *   // device_storage.cu
- *   __device__ float d_flex_hgt[50];
+ *   __device__ float d_height_levels[50];
  *
  *   // Some other file
- *   extern __device__ float d_flex_hgt[];
- *   cudaMemcpyToSymbol(d_flex_hgt, h_data, size);
+ *   extern __device__ float d_height_levels[];
+ *   cudaMemcpyToSymbol(d_height_levels, h_data, size);
  *
  *   // Kernel
  *   __global__ void kernel() {
- *       float height = d_flex_hgt[idx];  // Direct access
+ *       float height = d_height_levels[idx];  // Direct access
  *   }
  * @endcode
  *
@@ -44,21 +44,21 @@
  * @code
  *   // ldm.cuh
  *   class LDM {
- *       float* d_flex_hgt;
+ *       float* d_height_levels;
  *   };
  *
  *   // ldm.cu
  *   LDM::LDM() {
- *       cudaMalloc(&d_flex_hgt, 50 * sizeof(float));
+ *       cudaMalloc(&d_height_levels, 50 * sizeof(float));
  *   }
  *
  *   // Kernel call site
- *   ks.flex_hgt = d_flex_hgt;
+ *   ks.height_levels = d_height_levels;
  *   kernel<<<blocks, threads>>>(ks);
  *
  *   // Kernel
  *   __global__ void kernel(KernelScalars ks) {
- *       float height = ks.flex_hgt[idx];  // Pointer access
+ *       float height = ks.height_levels[idx];  // Pointer access
  *   }
  * @endcode
  *
@@ -85,7 +85,7 @@
 // ============================================================================
 //
 // This file previously contained __device__ declarations for:
-// - d_flex_hgt[50]: Vertical height levels for meteorological interpolation
+// - d_height_levels[50]: Vertical height levels for meteorological interpolation
 // - T_const[N*N]: CRAM decay transition matrix for radioactive decay chains
 //
 // All arrays have been migrated to regular GPU memory (cudaMalloc) and are

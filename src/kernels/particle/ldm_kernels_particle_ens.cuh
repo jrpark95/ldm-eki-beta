@@ -53,7 +53,7 @@
  *   - Preserves mass within each ensemble
  *   - Maintains ensemble_id consistency
  *
- * @note Uses global constants: d_dt, d_flex_hgt[], T_const
+ * @note Uses global constants: d_dt, d_height_levels[], T_const
  * @note Particle ordering: [ens0_p0, ens0_p1, ..., ens1_p0, ens1_p1, ...]
  *
  * @warning Requires total_particles = num_ensemble * particles_per_ensemble

@@ -201,10 +201,10 @@ void LDM::checkParticleNaN(const std::string& location, int max_check) {
  * GPU meteorological data slots to detect corrupted data before kernel use.
  *
  * Meteorological Data Sources:
- * - g_eki_meteo.host_flex_pres_data: Preloaded pressure-level data (UU, VV, WW, RHO, DRHO)
+ * - g_eki_meteo.h_pressure: Preloaded pressure-level data (UU, VV, WW, RHO, DRHO)
  * - g_eki_meteo.host_flex_unis_data: Preloaded surface-level data
- * - device_meteorological_flex_pres0/1: Current GPU working buffers
- * - device_meteorological_flex_unis0/1: Current GPU surface buffers
+ * - d_pressure_past/1: Current GPU working buffers
+ * - d_surface_past/1: Current GPU surface buffers
  *
  * Common Issues Detected:
  * - GFS file read errors (corrupted netCDF files)
@@ -238,10 +238,10 @@ void LDM::checkParticleNaN(const std::string& location, int max_check) {
 void LDM::checkMeteoDataNaN(const std::string& location) {
 #ifdef DEBUG
     // Check first meteorological data in host memory
-    if (g_eki_meteo.is_initialized && !g_eki_meteo.host_flex_pres_data.empty() &&
-        g_eki_meteo.host_flex_pres_data[0] != nullptr) {
+    if (g_eki_meteo.is_initialized && !g_eki_meteo.h_pressure.empty() &&
+        g_eki_meteo.h_pressure[0] != nullptr) {
 
-        FlexPres* pres_data = g_eki_meteo.host_flex_pres_data[0];
+        FlexPres* pres_data = g_eki_meteo.h_pressure[0];
         FlexUnis* unis_data = g_eki_meteo.host_flex_unis_data[0];
 
         int nan_count = 0;
@@ -270,17 +270,17 @@ void LDM::checkMeteoDataNaN(const std::string& location) {
         }
 
         // Also check current meteorological data in GPU memory
-        if (device_meteorological_flex_pres0 && device_meteorological_flex_pres1) {
+        if (d_pressure_past && d_pressure_future) {
             printf("[DEBUG] %s: Checking GPU meteorological data slots...\n", location.c_str());
 
             // Get sample data from GPU
             FlexPres sample_pres0, sample_pres1;
             FlexUnis sample_unis0, sample_unis1;
 
-            cudaMemcpy(&sample_pres0, device_meteorological_flex_pres0, sizeof(FlexPres), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&sample_pres1, device_meteorological_flex_pres1, sizeof(FlexPres), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&sample_unis0, device_meteorological_flex_unis0, sizeof(FlexUnis), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&sample_unis1, device_meteorological_flex_unis1, sizeof(FlexUnis), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&sample_pres0, d_pressure_past, sizeof(FlexPres), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&sample_pres1, d_pressure_future, sizeof(FlexPres), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&sample_unis0, d_surface_past, sizeof(FlexUnis), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&sample_unis1, d_surface_future, sizeof(FlexUnis), cudaMemcpyDeviceToHost);
 
             bool gpu_has_nan = std::isnan(sample_pres0.UU) || std::isnan(sample_pres0.VV) ||
                               std::isnan(sample_pres0.WW) || std::isnan(sample_pres0.RHO) ||

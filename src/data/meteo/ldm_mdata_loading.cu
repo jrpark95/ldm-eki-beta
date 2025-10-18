@@ -21,7 +21,7 @@
  *          **Memory Management:**
  *          - Three timestep buffers: device_meteorological_flex_*0/1/2
  *          - Rolling buffer update during simulation progression
- *          - Height data cached separately in d_flex_hgt
+ *          - Height data cached separately in d_height_levels
  *
  * @note Input data path hardcoded: "../gfsdata/0p5/"
  * @note Data dimensions from LDM member variables: dimX_GFS, dimY_GFS, dimZ_GFS
@@ -65,7 +65,7 @@
  *
  * @warning File open failures print error and return early
  * @warning CUDA memory allocation failures print error and return early
- * @warning Assumes height data already loaded in flex_hgt member variable
+ * @warning Assumes height data already loaded in g_height_levels member variable
  *
  * @output Terminal messages:
  *   - [DEBUG] Memory allocation sizes (ifdef DEBUG)
@@ -84,7 +84,7 @@ void LDM::initializeFlexGFSData(){
               << "Starting meteorological data initialization\n";
 #endif
 
-    flex_hgt.resize(dimZ_GFS);
+    g_height_levels.resize(dimZ_GFS);
 
     const char* filename = "../gfsdata/0p5/2.txt";
     int recordMarker;
@@ -320,14 +320,14 @@ void LDM::initializeFlexGFSData(){
     // }
 
     // Debug height data before DRHO calculation
-    std::cout << "[DRHO_DEBUG] Height check: flex_hgt[0]=" << flex_hgt[0] << ", flex_hgt[1]=" << flex_hgt[1] 
-              << ", diff=" << (flex_hgt[1] - flex_hgt[0]) << std::endl;
+    std::cout << "[DRHO_DEBUG] Height check: g_height_levels[0]=" << g_height_levels[0] << ", g_height_levels[1]=" << g_height_levels[1] 
+              << ", diff=" << (g_height_levels[1] - g_height_levels[0]) << std::endl;
     
     for (int i = 0; i < dimX_GFS+1; ++i) {
         for (int j = 0; j < dimY_GFS; ++j) {
             float rho0 = flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].RHO;
             float rho1 = flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + 1].RHO;
-            float hgt_diff = flex_hgt[1] - flex_hgt[0];
+            float hgt_diff = g_height_levels[1] - g_height_levels[0];
             
             flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO = (rho1 - rho0) / hgt_diff;
             
@@ -342,7 +342,7 @@ void LDM::initializeFlexGFSData(){
             for (int k = 1; k < dimZ_GFS-2; ++k) {
                 int index = i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + k;
                 flexpresdata[index].DRHO = 
-                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (flex_hgt[k+1]-flex_hgt[k-1]);
+                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (g_height_levels[k+1]-g_height_levels[k-1]);
                 //if(i==100 && j==50) printf("drho(%d) = %f\n", k, flexpresdata[index].DRHO);
             }
 
@@ -380,12 +380,12 @@ void LDM::initializeFlexGFSData(){
 
     file.close();
 
-    cudaMalloc((void**)&device_meteorological_flex_pres0, 
+    cudaMalloc((void**)&d_pressure_past, 
     (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres));
-    cudaMalloc((void**)&device_meteorological_flex_unis0, 
+    cudaMalloc((void**)&d_surface_past, 
     (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis));
     
-    cudaError_t copy_err = cudaMemcpy(device_meteorological_flex_pres0, 
+    cudaError_t copy_err = cudaMemcpy(d_pressure_past, 
         flexpresdata, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
         cudaMemcpyHostToDevice);
     if (copy_err != cudaSuccess) {
@@ -398,7 +398,7 @@ void LDM::initializeFlexGFSData(){
     }
 #endif
     
-    copy_err = cudaMemcpy(device_meteorological_flex_unis0, 
+    copy_err = cudaMemcpy(d_surface_past, 
         flexunisdata, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
         cudaMemcpyHostToDevice);
     if (copy_err != cudaSuccess) {
@@ -712,14 +712,14 @@ void LDM::initializeFlexGFSData(){
         for (int j = 0; j < dimY_GFS; ++j) {
             flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO = 
             (flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + 1].RHO - flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].RHO) /
-            (flex_hgt[1]-flex_hgt[0]);
+            (g_height_levels[1]-g_height_levels[0]);
 
             //if(i==100 && j==50) printf("drho(%d) = %f\n", 0, flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO);
             
             for (int k = 1; k < dimZ_GFS-2; ++k) {
                 int index = i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + k;
                 flexpresdata[index].DRHO = 
-                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (flex_hgt[k+1]-flex_hgt[k-1]);
+                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (g_height_levels[k+1]-g_height_levels[k-1]);
                 //if(i==100 && j==50) printf("drho(%d) = %f\n", k, flexpresdata[index].DRHO);
             }
 
@@ -736,15 +736,15 @@ void LDM::initializeFlexGFSData(){
 
     file.close();
 
-    cudaMalloc((void**)&device_meteorological_flex_pres1, 
+    cudaMalloc((void**)&d_pressure_future, 
     (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres));
-    cudaMalloc((void**)&device_meteorological_flex_unis1, 
+    cudaMalloc((void**)&d_surface_future, 
     (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis));
     
-    cudaMemcpy(device_meteorological_flex_pres1, 
+    cudaMemcpy(d_pressure_future, 
         flexpresdata, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
         cudaMemcpyHostToDevice);
-    cudaMemcpy(device_meteorological_flex_unis1, 
+    cudaMemcpy(d_surface_future, 
         flexunisdata, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
         cudaMemcpyHostToDevice);
 
@@ -1035,14 +1035,14 @@ void LDM::initializeFlexGFSData(){
         for (int j = 0; j < dimY_GFS; ++j) {
             flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO = 
             (flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + 1].RHO - flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].RHO) /
-            (flex_hgt[1]-flex_hgt[0]);
+            (g_height_levels[1]-g_height_levels[0]);
 
             //if(i==100 && j==50) printf("drho(%d) = %f\n", 0, flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO);
             
             for (int k = 1; k < dimZ_GFS-2; ++k) {
                 int index = i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + k;
                 flexpresdata[index].DRHO = 
-                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (flex_hgt[k+1]-flex_hgt[k-1]);
+                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (g_height_levels[k+1]-g_height_levels[k-1]);
                 //if(i==100 && j==50) printf("drho(%d) = %f\n", k, flexpresdata[index].DRHO);
             }
 
@@ -1059,15 +1059,15 @@ void LDM::initializeFlexGFSData(){
 
     file.close();
 
-    cudaMalloc((void**)&device_meteorological_flex_pres2, 
+    cudaMalloc((void**)&d_pressure_aux, 
     (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres));
-    cudaMalloc((void**)&device_meteorological_flex_unis2, 
+    cudaMalloc((void**)&d_surface_aux, 
     (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis));
     
-    cudaMemcpy(device_meteorological_flex_pres2, 
+    cudaMemcpy(d_pressure_aux, 
         flexpresdata, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
         cudaMemcpyHostToDevice);
-    cudaMemcpy(device_meteorological_flex_unis2, 
+    cudaMemcpy(d_surface_aux, 
         flexunisdata, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
         cudaMemcpyHostToDevice);
 
@@ -1189,7 +1189,7 @@ void LDM::initializeFlexGFSData(){
  *          4. Calculate DRHO from RHO and height data
  *          5. Copy host data → device_flex_*1 (host-to-GPU)
  *          6. Load corresponding height file hgt_(gfs_idx+2).txt
- *          7. Update d_flex_hgt with new height data
+ *          7. Update d_height_levels with new height data
  *
  * @param None (uses LDM member: gfs_idx, automatically incremented)
  *
@@ -1201,7 +1201,7 @@ void LDM::initializeFlexGFSData(){
  *
  * @warning File open failures print error and return early
  * @warning CUDA memory copy failures silently ignored (should check!)
- * @warning d_flex_hgt must be pre-allocated or nullptr (auto-allocates once)
+ * @warning d_height_levels must be pre-allocated or nullptr (auto-allocates once)
  *
  * @output Terminal messages:
  *   - [DEBUG] Filename being loaded
@@ -1226,11 +1226,11 @@ void LDM::loadFlexGFSData(){
     FlexPres* flexpresdata = new FlexPres[(dimX_GFS + 1) * dimY_GFS * dimZ_GFS];
     FlexUnis* flexunisdata = new FlexUnis[(dimX_GFS + 1) * dimY_GFS];
 
-    cudaMemcpy(device_meteorological_flex_pres0, 
-        device_meteorological_flex_pres1, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
+    cudaMemcpy(d_pressure_past, 
+        d_pressure_future, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
         cudaMemcpyDeviceToDevice);
-    cudaMemcpy(device_meteorological_flex_unis0, 
-        device_meteorological_flex_unis1, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
+    cudaMemcpy(d_surface_past, 
+        d_surface_future, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
         cudaMemcpyDeviceToDevice);
 
     size_t width  = dimX_GFS + 1; 
@@ -1439,14 +1439,14 @@ void LDM::loadFlexGFSData(){
         for (int j = 0; j < dimY_GFS; ++j) {
             flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO = 
             (flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + 1].RHO - flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].RHO) /
-            (flex_hgt[1]-flex_hgt[0]);
+            (g_height_levels[1]-g_height_levels[0]);
 
             //if(i==100 && j==50) printf("drho(%d) = %f\n", 0, flexpresdata[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].DRHO);
             
             for (int k = 1; k < dimZ_GFS-2; ++k) {
                 int index = i * dimY_GFS * dimZ_GFS + j * dimZ_GFS + k;
                 flexpresdata[index].DRHO = 
-                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (flex_hgt[k+1]-flex_hgt[k-1]);
+                (flexpresdata[index+1].RHO - flexpresdata[index-1].RHO) / (g_height_levels[k+1]-g_height_levels[k-1]);
                 //if(i==100 && j==50) printf("drho(%d) = %f\n", k, flexpresdata[index].DRHO);
             }
 
@@ -1463,10 +1463,10 @@ void LDM::loadFlexGFSData(){
 
     file.close();
     
-    cudaMemcpy(device_meteorological_flex_pres1, 
+    cudaMemcpy(d_pressure_future, 
         flexpresdata, (dimX_GFS+1) * dimY_GFS * dimZ_GFS * sizeof(FlexPres), 
         cudaMemcpyHostToDevice);
-    cudaMemcpy(device_meteorological_flex_unis1, 
+    cudaMemcpy(d_surface_future, 
         flexunisdata, (dimX_GFS+1) * dimY_GFS * sizeof(FlexUnis), 
         cudaMemcpyHostToDevice);
 
@@ -1485,26 +1485,26 @@ void LDM::loadFlexGFSData(){
 
     for (int index = 0; index < dimZ_GFS; ++index) {
         file_hgt.read(reinterpret_cast<char*>(&recordMarker_hgt), sizeof(int));
-        file_hgt.read(reinterpret_cast<char*>(&flex_hgt[index]), sizeof(float));
+        file_hgt.read(reinterpret_cast<char*>(&g_height_levels[index]), sizeof(float));
         file_hgt.read(reinterpret_cast<char*>(&recordMarker_hgt), sizeof(int));
-        // std::cout << "flex_hgt[" << index << "] = " << flex_hgt[index] << std::endl;
+        // std::cout << "g_height_levels[" << index << "] = " << g_height_levels[index] << std::endl;
     }
 
     file_hgt.close();
 
     // Allocate GPU memory for height data if not already allocated
-    if (d_flex_hgt == nullptr) {
-        cudaError_t alloc_err = cudaMalloc(&d_flex_hgt, sizeof(float) * dimZ_GFS);
+    if (d_height_levels == nullptr) {
+        cudaError_t alloc_err = cudaMalloc(&d_height_levels, sizeof(float) * dimZ_GFS);
         if (alloc_err != cudaSuccess) {
-            std::cerr << "Failed to allocate GPU memory for flex_hgt: " << cudaGetErrorString(alloc_err) << std::endl;
+            std::cerr << "Failed to allocate GPU memory for g_height_levels: " << cudaGetErrorString(alloc_err) << std::endl;
             return;
         }
     }
 
     // Copy height data to GPU memory
-    cudaError_t err = cudaMemcpy(d_flex_hgt, flex_hgt.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+    cudaError_t err = cudaMemcpy(d_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
-        std::cerr << "Failed to copy flex_hgt to GPU memory: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "Failed to copy g_height_levels to GPU memory: " << cudaGetErrorString(err) << std::endl;
     }
 
 
@@ -1531,16 +1531,16 @@ void LDM::loadFlexGFSData(){
  *          - dimZ_GFS float values (typically 30 levels for GFS 0.5°)
  *
  *          **Memory Allocation:**
- *          - Host memory: flex_hgt vector (LDM member variable)
- *          - GPU memory: d_flex_hgt (allocated if nullptr, then populated)
+ *          - Host memory: g_height_levels vector (LDM member variable)
+ *          - GPU memory: d_height_levels (allocated if nullptr, then populated)
  *          - Size: dimZ_GFS * sizeof(float)
  *
- * @param None (uses LDM members: flex_hgt, d_flex_hgt, dimZ_GFS)
+ * @param None (uses LDM members: g_height_levels, d_height_levels, dimZ_GFS)
  *
  * @return void
  *
  * @note Called once during initialization before initializeFlexGFSData()
- * @note GPU memory d_flex_hgt persists for entire simulation
+ * @note GPU memory d_height_levels persists for entire simulation
  * @note NaN detection included for data validation
  *
  * @warning File must exist or function returns early with error
@@ -1561,10 +1561,10 @@ void LDM::loadFlexGFSData(){
  *****************************************************************************/
 void LDM::loadFlexHeightData(){ 
 
-    std::cout << "[DEBUG] Starting read_meteorological_flex_hgt function..." << std::endl;
+    std::cout << "[DEBUG] Starting read_meteorological_g_height_levels function..." << std::endl;
     
-    flex_hgt.resize(dimZ_GFS);
-    std::cout << "[DEBUG] flex_hgt vector resized to " << dimZ_GFS << " elements" << std::endl;
+    g_height_levels.resize(dimZ_GFS);
+    std::cout << "[DEBUG] g_height_levels vector resized to " << dimZ_GFS << " elements" << std::endl;
 
     const char* filename = "../gfsdata/0p5/hgt_2.txt";
     int recordMarker;
@@ -1583,15 +1583,15 @@ void LDM::loadFlexHeightData(){
             return;
         }
         
-        file.read(reinterpret_cast<char*>(&flex_hgt[index]), sizeof(float));
+        file.read(reinterpret_cast<char*>(&g_height_levels[index]), sizeof(float));
         if (file.fail()) {
-            std::cerr << "[ERROR] Failed to read flex_hgt data at index " << index << std::endl;
+            std::cerr << "[ERROR] Failed to read g_height_levels data at index " << index << std::endl;
             return;
         }
         
         // Check for NaN in height data
-        if (std::isnan(flex_hgt[index])) {
-            std::cout << "[HGT_NAN] flex_hgt[" << index << "] is NaN!" << std::endl;
+        if (std::isnan(g_height_levels[index])) {
+            std::cout << "[HGT_NAN] g_height_levels[" << index << "] is NaN!" << std::endl;
         }
         
         file.read(reinterpret_cast<char*>(&recordMarker), sizeof(int));
@@ -1600,30 +1600,30 @@ void LDM::loadFlexHeightData(){
             return;
         }
         
-        // std::cout << "flex_hgt[" << index << "] = " << flex_hgt[index] << std::endl;
+        // std::cout << "g_height_levels[" << index << "] = " << g_height_levels[index] << std::endl;
     }
 
     file.close();
     std::cout << "[DEBUG] Successfully read " << dimZ_GFS << " height levels from file" << std::endl;
 
     // Allocate GPU memory for height data if not already allocated
-    if (d_flex_hgt == nullptr) {
+    if (d_height_levels == nullptr) {
         std::cout << "[DEBUG] Allocating GPU memory for " << dimZ_GFS << " height levels" << std::endl;
-        cudaError_t alloc_err = cudaMalloc(&d_flex_hgt, sizeof(float) * dimZ_GFS);
+        cudaError_t alloc_err = cudaMalloc(&d_height_levels, sizeof(float) * dimZ_GFS);
         if (alloc_err != cudaSuccess) {
-            std::cerr << "[ERROR] Failed to allocate GPU memory for flex_hgt: " << cudaGetErrorString(alloc_err) << std::endl;
+            std::cerr << "[ERROR] Failed to allocate GPU memory for g_height_levels: " << cudaGetErrorString(alloc_err) << std::endl;
             return;
         }
     }
 
     // Copy height data to GPU memory
-    std::cout << "[DEBUG] Copying " << dimZ_GFS << " float values to d_flex_hgt GPU memory" << std::endl;
-    cudaError_t err = cudaMemcpy(d_flex_hgt, flex_hgt.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
+    std::cout << "[DEBUG] Copying " << dimZ_GFS << " float values to d_height_levels GPU memory" << std::endl;
+    cudaError_t err = cudaMemcpy(d_height_levels, g_height_levels.data(), sizeof(float) * dimZ_GFS, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
-        std::cerr << "[ERROR] Failed to copy flex_hgt to GPU memory: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "[ERROR] Failed to copy g_height_levels to GPU memory: " << cudaGetErrorString(err) << std::endl;
         std::cerr << "[ERROR] Size attempted: " << sizeof(float) * dimZ_GFS << " bytes (" << dimZ_GFS << " floats)" << std::endl;
     } else {
-        std::cout << "[DEBUG] Successfully copied flex_hgt to GPU memory" << std::endl;
+        std::cout << "[DEBUG] Successfully copied g_height_levels to GPU memory" << std::endl;
     }
 
 

@@ -50,7 +50,6 @@ KERNEL_SOURCES = \
 # Data module sources (Agent 2)
 DATA_SOURCES = \
     src/data/meteo/ldm_mdata_loading.cu \
-    src/data/meteo/ldm_mdata_processing.cu \
     src/data/meteo/ldm_mdata_cache.cu
 
 # Simulation module sources (Agent 2)
