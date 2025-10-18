@@ -1,0 +1,195 @@
+# 에이전트 작업 지시서 #1: 시스템 안정화 보고서 작성
+
+## 에이전트 역할
+당신은 LDM-EKI 시스템의 안정화 과정을 분석하고 문서화하는 기술 문서 전문가입니다.
+
+## 작업 목표
+"시스템_안정화_보고서.txt" 파일을 작성하여 코드의 안정성과 신뢰성을 개선한 모든 내역을 상세히 문서화합니다.
+
+## 조사해야 할 파일 목록
+
+### 1. 코드 리팩토링 관련
+- `/home/jrpark/ldm-eki-release.v.beta/src/kernels/ldm_kernels.cuh.ORIGINAL_BACKUP` (원본 3865줄 파일)
+- `/home/jrpark/ldm-eki-release.v1.0/docs/PHASE4_CUDA_KERNELS_DOCUMENTATION.md` (커널 모듈화 문서)
+- `/home/jrpark/ldm-eki-release.v1.0/PARALLEL_REFACTORING_MASTER.md` (병렬 리팩토링 마스터 플랜)
+- 현재 src/ 폴더 구조와 모든 .cuh/.cu 파일들의 줄 수 비교
+
+### 2. 메모리 및 GPU 안정성 관련
+- `/home/jrpark/ldm-eki-release.v1.0/docs/FIX_REPORT_INVALID_DEVICE_SYMBOL_20251016.md`
+- `/home/jrpark/ldm-eki-release.v1.0/docs/FIX_REPORT_NAN_DOSE_20251016.md`
+- `/home/jrpark/ldm-eki-release.v1.0/docs/KERNEL_ERROR_COLLECTOR.md`
+- `/home/jrpark/ldm-eki-release.v.beta/src/debug/kernel_error_collector.cuh`
+- `/home/jrpark/ldm-eki-release.v.beta/src/debug/kernel_error_collector.cu`
+- `/home/jrpark/ldm-eki-release.v.beta/src/debug/memory_doctor.cuh`
+- `/home/jrpark/ldm-eki-release.v.beta/src/debug/memory_doctor.cu`
+
+### 3. CRAM T Matrix 문제 해결
+- `/home/jrpark/ldm-eki-release.v.beta/src/physics/ldm_cram2.cu`
+- `/home/jrpark/ldm-eki-release.v.beta/src/core/params.hpp`
+- Git 커밋에서 "CRAM", "T matrix", "constant memory" 관련 변경사항
+
+### 4. 빌드 시스템 관련
+- `/home/jrpark/ldm-eki-release.v.beta/Makefile`
+- Git 커밋에서 "-O2", "-O3", "parallel build" 관련 변경사항
+
+### 5. IPC 통신 안정화
+- `/home/jrpark/ldm-eki-release.v.beta/src/ipc/ldm_eki_writer.cuh`
+- `/home/jrpark/ldm-eki-release.v.beta/src/ipc/ldm_eki_reader.cuh`
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/eki_ipc_reader.py`
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/eki_ipc_writer.py`
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/eki_shm_config.py`
+
+## 조사 방법
+
+### Git 커밋 분석
+```bash
+# 리팩토링 관련 커밋 찾기
+git log --grep="refactor" --oneline
+git log --grep="modular" --oneline
+git log --grep="split" --oneline
+
+# 안정성 개선 관련
+git log --grep="fix" --oneline
+git log --grep="stable" --oneline
+git log --grep="error" --oneline
+
+# 특정 파일의 변경 이력
+git log -p src/kernels/ldm_kernels.cuh
+git log -p Makefile
+```
+
+### 코드 라인 수 비교
+```bash
+# 원본 파일 라인 수
+wc -l src/kernels/ldm_kernels.cuh.ORIGINAL_BACKUP
+
+# 현재 모듈화된 파일들 라인 수
+find src/kernels -name "*.cu" -o -name "*.cuh" | xargs wc -l
+find src/simulation -name "*.cu" -o -name "*.cuh" | xargs wc -l
+find src/ipc -name "*.cu" -o -name "*.cuh" | xargs wc -l
+```
+
+## 보고서 작성 구조
+
+### 1. 개요 (약 100줄)
+- 프로젝트 배경 및 초기 상태
+- 안정화 목표 및 접근 방법
+- 주요 개선 지표 요약
+
+### 2. 코드 구조 개선 (약 250줄)
+#### 2.1 대규모 리팩토링
+- 원본: ldm_kernels.cuh (3865줄) 단일 파일
+- 결과: 23개 모듈 파일로 분할
+- 병렬 리팩토링 프로세스 (6개 에이전트 동시 작업) 상세 설명
+- 각 모듈별 책임과 기능 설명
+
+#### 2.2 디렉토리 구조 재설계
+- src/kernels/ (CUDA 커널)
+  - device/ (디바이스 함수)
+  - particle/ (입자 업데이트)
+  - eki/ (관측 수집)
+  - dump/ (그리드 덤프)
+  - cram/ (방사성 붕괴)
+- src/simulation/ (시뮬레이션 로직)
+- src/ipc/ (프로세스 간 통신)
+- src/physics/ (물리 모델)
+- src/visualization/ (VTK 출력)
+- src/init/ (초기화)
+- src/debug/ (디버깅 도구)
+
+### 3. 메모리 및 GPU 안정성 (약 300줄)
+#### 3.1 CRAM T Matrix 문제
+- 문제: __constant__ 메모리 48KB 제한 초과
+- 증상: "invalid device symbol" 에러
+- 해결: KernelScalars 구조체를 통한 일반 GPU 메모리 사용
+- 상세 구현 코드 및 변경사항
+
+#### 3.2 NaN Dose 문제
+- 문제: 관측값 계산 시 NaN 발생
+- 원인: 부동소수점 정밀도 문제
+- 해결: 계산 순서 조정 및 안전 검사 추가
+
+#### 3.3 Kernel Error Collection System
+- 목적: 비동기 커널 에러 수집 및 일괄 보고
+- 구현: CHECK_KERNEL_ERROR() 매크로
+- 장점: 실시간 에러 출력 없이 종료 시 종합 보고
+- 로그 파일: logs/error/kernel_errors_*.log
+
+#### 3.4 Memory Doctor System
+- 목적: Python-C++ IPC 데이터 전송 디버깅
+- 기능: 모든 공유 메모리 전송 로깅
+- 체크섬 검증 및 통계 분석
+- 디버그 모드 활성화 방법
+
+### 4. 빌드 시스템 최적화 (약 150줄)
+#### 4.1 컴파일 최적화
+- 최적화 레벨: -O3 → -O2 (빠른 컴파일, 충분한 성능)
+- 병렬 빌드: -j$(nproc) 자동 적용
+- 빌드 시간: 2-3분 → 30초
+
+#### 4.2 Makefile 개선
+- 자동 의존성 관리
+- 증분 빌드 지원
+- 타겟별 최적화 설정
+
+### 5. IPC 통신 안정화 (약 200줄)
+#### 5.1 공유 메모리 기반 통신
+- POSIX 공유 메모리 사용 (/dev/shm/)
+- 버퍼 크기 최적화
+- 동기화 메커니즘 개선
+
+#### 5.2 데이터 정합성 보장
+- Row-major (C++) ↔ Column-major (Python) 변환
+- 체크섬 검증 시스템
+- 재시도 로직 구현
+
+#### 5.3 설정 통합 전송
+- EKIConfigFull 구조체 (84 바이트)
+- true_emissions 별도 세그먼트 전송
+- 버전 호환성 체크
+
+### 6. 에러 처리 개선 (약 100줄)
+- 계층적 에러 처리
+- 의미있는 에러 메시지
+- 복구 가능한 에러 처리
+- 로그 시스템 통합
+
+### 7. 성능 지표 및 결과 (약 100줄)
+- 빌드 시간: 75% 감소
+- 메모리 사용량: 20% 감소
+- GPU 에러율: 0%로 감소
+- 코드 가독성: 모듈별 평균 300줄
+- 테스트 커버리지 향상
+
+### 8. 교훈 및 권장사항 (약 50줄)
+- 모듈화의 중요성
+- 병렬 개발 프로세스의 효과
+- 디버깅 도구의 필요성
+- 지속적인 리팩토링의 가치
+
+## 작성 시 주의사항
+
+1. **구체적인 코드 예시 포함**
+   - Before/After 코드 비교
+   - 실제 에러 메시지와 해결 방법
+   - 설정 파일 예시
+
+2. **정량적 지표 제시**
+   - 파일 크기 변화
+   - 빌드 시간 측정값
+   - 에러 발생 빈도
+
+3. **시간순 개발 과정**
+   - Git 커밋 날짜 참조
+   - 주요 마일스톤 표시
+
+4. **기술적 상세 설명**
+   - 왜 그런 결정을 했는지
+   - 대안은 무엇이었는지
+   - 트레이드오프는 무엇인지
+
+## 최종 산출물
+- 파일명: `/home/jrpark/ldm-eki-release.v.beta/docs/시스템_안정화_보고서.txt`
+- 예상 분량: 1,200줄 이상
+- 언어: 한국어
+- 형식: 기술 보고서 (섹션 번호, 부제목, 코드 블록 포함)

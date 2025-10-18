@@ -261,7 +261,7 @@ extern std::vector<float> g_height_levels;
 // Other modules can write directly to this for log-only output
 extern std::ofstream* g_log_file;
 
-// 물리/격자 상수 정리 (계산 로직 변경 없음)
+// Physical and grid constants organized (no logic changes)
 namespace Constants {
     // 격자 상수
     constexpr float LDAPS_E = 132.36f, LDAPS_W = 121.06f, LDAPS_N = 43.13f, LDAPS_S = 32.20f;
@@ -633,13 +633,13 @@ public:
     bool build_T_matrix_and_upload(const char* A60_csv_path);
     bool initialize_cram_system(const char* A60_csv_path);
 
-    // EKI용 기상자료 사전 로딩 함수들
+    // Meteorological data preloading functions for EKI
     int calculateRequiredMeteoFiles();
     bool preloadAllEKIMeteorologicalData();
     bool loadSingleMeteoFile(int file_index, FlexPres*& pres_data, FlexUnis*& unis_data, std::vector<float>& hgt_data);
     void cleanupEKIMeteorologicalData();
 
-    // NaN 디버깅 함수들
+    // NaN debugging functions
     void checkParticleNaN(const std::string& location, int max_check = 10);
     void checkMeteoDataNaN(const std::string& location);
 };

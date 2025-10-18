@@ -1,0 +1,370 @@
+# 에이전트 작업 지시서 #2: 사용성 개선 보고서 작성
+
+## 에이전트 역할
+당신은 LDM-EKI 시스템의 사용자 경험(UX) 개선 과정을 분석하고 문서화하는 UX 전문가입니다.
+
+## 작업 목표
+"사용성_개선_보고서.txt" 파일을 작성하여 사용자 친화적으로 만든 모든 개선사항을 상세히 문서화합니다.
+
+## 조사해야 할 파일 목록
+
+### 1. 설정 파일 현대화 관련
+- `/home/jrpark/ldm-eki-release.v1.0/docs/INPUT_MODERNIZATION_PLAN.md` (전체 계획)
+- `/home/jrpark/ldm-eki-release.v1.0/docs/MODERNIZATION_COMPLETE.md` (완료 보고서)
+- 구 설정 파일:
+  - `input/setting.txt` (legacy)
+  - `input/eki_settings.txt` (legacy)
+- 신 설정 파일 (5개):
+  - `input/simulation.conf`
+  - `input/physics.conf`
+  - `input/source.conf`
+  - `input/nuclides.conf`
+  - `input/advanced.conf`
+  - `input/eki.conf`
+  - `input/receptor.conf`
+- 파서 구현: `src/init/ldm_init_config.cu`
+
+### 2. 입력 검증 시스템
+- `src/init/ldm_init_config.cu`의 validateEKIConfiguration() 함수 (600+ 줄)
+- 각 설정 파일별 검증 로직
+- 에러 메시지 형식과 내용
+
+### 3. 터미널 출력 개선
+- `src/colors.h` (ANSI 색상 정의)
+- `src/main_eki.cu`의 ColorStripStreambuf 클래스
+- 진행률 바 구현 코드
+- Git 커밋: "Improve progress bar", "ANSI color", "terminal output"
+
+### 4. 자동화 기능
+- `util/cleanup.py` (자동 정리 스크립트)
+- `util/compare_all_receptors.py` (자동 시각화)
+- `util/detailed_postprocess.py` (자동 후처리 안내)
+- 자동 실행 로직: `src/main_eki.cu`
+
+### 5. 국제화 관련
+- Git 커밋: "영어 변환", "English translation", "internationalization"
+- 모든 출력 메시지 변경 내역
+
+## 조사 방법
+
+### 설정 파일 비교 분석
+```bash
+# 라인 수 비교
+wc -l input/setting.txt input/eki_settings.txt
+wc -l input/*.conf
+
+# 주석 비율 분석
+grep -c "^#" input/*.conf
+grep -c "^//" input/*.conf
+
+# 키워드 분석
+grep -i "example" input/*.conf
+grep -i "unit" input/*.conf
+grep -i "range" input/*.conf
+```
+
+### Git 히스토리 분석
+```bash
+# 설정 파일 관련
+git log --grep="config" --oneline
+git log --grep="setting" --oneline
+git log --grep="moderniz" --oneline
+
+# UI/UX 관련
+git log --grep="color" --oneline
+git log --grep="progress" --oneline
+git log --grep="output" --oneline
+git log --grep="user" --oneline
+
+# 자동화 관련
+git log --grep="auto" --oneline
+git log --grep="cleanup" --oneline
+```
+
+### 색상 사용 패턴 분석
+```bash
+# ANSI 색상 코드 사용 찾기
+grep -r "RED(" src/
+grep -r "GREEN(" src/
+grep -r "YELLOW(" src/
+grep -r "BOLD(" src/
+grep -r "\\033\\[" src/
+```
+
+## 보고서 작성 구조
+
+### 1. 개요 (약 150줄)
+- 사용성 개선의 필요성
+- 타겟 사용자 분석 (연구원, 엔지니어, 운영자)
+- 개선 전 주요 문제점들
+- 개선 목표 및 원칙
+
+### 2. 설정 파일 현대화 (약 400줄)
+
+#### 2.1 Legacy 시스템의 문제점
+- 단일 거대 파일 (setting.txt: 300+ 줄)
+- 불명확한 파라미터 이름
+- 주석 부족
+- 물리적 단위 미표기
+- 그룹화 부재
+
+#### 2.2 새로운 설정 시스템 설계
+- 5개 전문 파일로 분할
+- 자기 문서화 원칙
+- 각 파일별 상세 분석:
+
+##### simulation.conf (75줄)
+- 시간 설정 섹션
+- 입자 설정 섹션
+- 출력 설정 섹션
+- 각 파라미터별 설명, 단위, 예제, 범위
+
+##### physics.conf (33줄)
+- 물리 모델 On/Off
+- 각 모델의 의미
+- 향후 확장 가능성
+
+##### source.conf (28줄)
+- 방출원 위치
+- 좌표계 설명
+- 높이 단위 및 범위
+
+##### nuclides.conf (50줄)
+- 핵종 특성
+- 붕괴상수 계산법
+- 침적속도 의미
+
+##### advanced.conf (66줄)
+- 전문가용 설정
+- 개발 중 경고
+- 향후 구현 계획
+
+##### eki.conf (400+ 줄)
+- EKI 알고리즘 설정
+- 수렴 조건
+- 앙상블 크기
+- 고급 옵션
+
+##### receptor.conf (32+ 줄)
+- 수용체 위치
+- 포착 반경
+- 좌표 형식
+
+#### 2.3 설정 파일 특징
+- 일관된 KEY: value 형식
+- 섹션별 구분선
+- 인라인 주석 (# 또는 //)
+- 예제 값 제공
+- 물리적 단위 명시
+- 유효 범위 표시
+
+### 3. 입력 검증 시스템 (약 350줄)
+
+#### 3.1 검증 철학
+- Fail-fast 원칙
+- Educational errors
+- 사용자 교육 중심
+
+#### 3.2 검증 레벨
+1. **타입 검증**
+   - 숫자 형식 체크
+   - 범위 검증
+   - 필수 항목 체크
+
+2. **물리적 타당성**
+   - 시간 관련: dt < time_end
+   - 입자 수: 100 ≤ N ≤ 1,000,000
+   - 좌표: -180 ≤ lon ≤ 180, -90 ≤ lat ≤ 90
+   - 높이: 0 ≤ h ≤ 10,000m
+
+3. **통계적 타당성**
+   - 앙상블 크기 vs 상태 변수
+   - 수렴 조건 합리성
+   - 반복 횟수 적절성
+
+4. **상호 의존성**
+   - 그리드 차원 일치
+   - 시간 스텝 호환성
+   - 메모리 요구사항
+
+#### 3.3 에러 메시지 설계
+```
+[ERROR] Invalid particle count: -100
+  Problem: Particle count must be positive
+  Requirement: 100 ≤ total_particles ≤ 1,000,000
+  Current value: -100
+  Recommended: 10,000 for testing, 100,000 for production
+  Example: TOTAL_PARTICLES: 10000
+  Fix location: input/simulation.conf, line 23
+```
+
+#### 3.4 검증 코드 구현 상세
+- validateTimeSettings()
+- validateParticleSettings()
+- validatePhysicsModels()
+- validateSourceLocations()
+- validateNuclideConfig()
+- validateEKIAlgorithmSettings()
+- validateReceptorConfiguration()
+- validateMemoryRequirements()
+
+### 4. 터미널 출력 개선 (약 300줄)
+
+#### 4.1 색상 코딩 시스템
+- **빨강**: 에러, 실패, 경고
+- **초록**: 성공, 완료, OK
+- **노랑**: 경고, 주의, 진행 중
+- **파랑**: 정보, 헤더
+- **보라**: 디버그 정보
+- **주황**: 중요 알림
+- **굵게**: 강조
+- **밑줄**: 링크, 경로
+
+#### 4.2 진행률 바 구현
+```
+Time: 21600.0 sec │ Step: 216/216 [████████████████] 100.0%
+Meteo: Past=2 Future=2 │ t0=0.000
+Mode: ENSEMBLE │ Size: 100
+VTK: Disabled
+────────────────────────────────────────────────────────────
+```
+- 실시간 업데이트
+- ANSI 커서 제어
+- 고정 스크롤 모드
+- 하단 구분선
+
+#### 4.3 ColorStripStreambuf 클래스
+- 로그 파일용 ANSI 코드 자동 제거
+- 터미널: 색상 출력
+- 파일: 깨끗한 텍스트
+- 구현 세부사항
+
+#### 4.4 로그 시스템
+- 계층적 로그 레벨
+- logonly 스트림 (파일 전용)
+- 타임스탬프 자동 추가
+- 로그 파일 자동 생성
+
+### 5. 자동화 기능 (약 250줄)
+
+#### 5.1 자동 데이터 정리
+**cleanup.py 기능:**
+- 이전 실행 데이터 자동 감지
+- 사용자 확인 프롬프트
+- 선택적 정리 옵션:
+  - --logs-only
+  - --output-only
+  - --shm-only
+  - --dry-run
+  - --no-confirm
+- 공유 메모리 정리
+- 임시 파일 제거
+
+#### 5.2 자동 시각화
+**compare_all_receptors.py:**
+- 시뮬레이션 종료 시 자동 실행
+- 16개 수용체 동시 플롯
+- 방출량 추정 그래프
+- 수렴 히스토리
+- PNG 파일 자동 저장
+
+#### 5.3 자동 후처리 안내
+**detailed_postprocess.py 안내:**
+- 시뮬레이션 종료 시 자동 메시지
+- 실행 명령어 제공
+- 생성될 결과물 안내
+- 선택적 실행
+
+#### 5.4 자동 경로 설정
+- 상대 경로 → 절대 경로 자동 변환
+- 작업 디렉토리 자동 감지
+- 환경 변수 자동 설정
+
+### 6. 국제화 (약 200줄)
+
+#### 6.1 한국어 → 영어 변환
+- 모든 출력 메시지 번역
+- 주석 번역
+- 변수명 표준화
+- 함수명 영문화
+
+#### 6.2 기술 용어 표준화
+- 대기과학 표준 용어
+- SI 단위계 사용
+- 약어 정의 (EKI, LDM, GFS 등)
+
+#### 6.3 변환 예시
+Before:
+```
+[오류] 입자 수가 너무 적습니다: 50개
+최소 100개 이상 필요합니다.
+```
+
+After:
+```
+[ERROR] Particle count too low: 50
+Minimum requirement: 100 particles
+Recommended: 10,000 for testing
+```
+
+### 7. 사용자 워크플로우 개선 (약 150줄)
+
+#### 7.1 전형적인 사용 시나리오
+1. 설정 파일 편집
+2. `./ldm-eki` 실행
+3. 자동 정리 확인
+4. 시뮬레이션 진행
+5. 자동 시각화 생성
+6. 상세 분석 옵션 안내
+
+#### 7.2 에러 복구 가이드
+- 명확한 에러 메시지
+- 수정 방법 제시
+- 예제 코드 제공
+- 파일 위치 안내
+
+#### 7.3 성능 모니터링
+- 실시간 진행률
+- 메모리 사용량 표시
+- GPU 사용률 (nvidia-smi 연동)
+- 예상 완료 시간
+
+### 8. 사용성 테스트 결과 (약 100줄)
+- 설정 시간: 30분 → 5분
+- 에러 해결 시간: 평균 1시간 → 5분
+- 사용자 만족도 향상
+- 학습 곡선 감소
+
+### 9. 모범 사례 및 권장사항 (약 50줄)
+- 설정 파일 버전 관리
+- 템플릿 활용
+- 자동화 스크립트 커스터마이징
+- 로그 분석 팁
+
+## 작성 시 주의사항
+
+1. **Before/After 비교 필수**
+   - 스크린샷 또는 텍스트 출력
+   - 개선 전후 명확한 대비
+   - 정량적 개선 지표
+
+2. **사용자 관점 유지**
+   - 기술적 설명 최소화
+   - 실제 사용 예시 중심
+   - 문제 해결 중심
+
+3. **완전한 예제 제공**
+   - 전체 설정 파일 예시
+   - 실행 명령어
+   - 예상 출력
+
+4. **시각적 요소 활용**
+   - ASCII 아트 다이어그램
+   - 표 형식 정리
+   - 들여쓰기로 구조 표현
+
+## 최종 산출물
+- 파일명: `/home/jrpark/ldm-eki-release.v.beta/docs/사용성_개선_보고서.txt`
+- 예상 분량: 2,000줄 이상
+- 언어: 한국어
+- 형식: 사용자 매뉴얼 스타일 (예시 중심, 단계별 가이드)

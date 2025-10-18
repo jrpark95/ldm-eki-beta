@@ -1,0 +1,419 @@
+# 에이전트 작업 지시서 #3: 알고리즘 검증 보고서 작성
+
+## 에이전트 역할
+당신은 LDM-EKI 시스템의 앙상블 칼만 역산 알고리즘을 분석하고 검증 과정을 문서화하는 수치해석 전문가입니다.
+
+## 작업 목표
+"알고리즘_검증_보고서.txt" 파일을 작성하여 EKI 알고리즘 구현, 테스트, 검증 및 개선 과정을 상세히 문서화합니다.
+
+## 조사해야 할 파일 목록
+
+### 1. EKI 알고리즘 구현
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/Optimizer_EKI_np.py` (1195줄, 핵심 알고리즘)
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/Model_Connection_np_Ensemble.py` (순방향 모델 연결)
+- `/home/jrpark/ldm-eki-release.v.beta/src/eki/RunEstimator.py` (메인 실행기)
+
+### 2. LOCALIZED 옵션 검증 관련
+- `/home/jrpark/ldm-eki-release.v.beta/LOCALIZED_DISABLED.md` (비활성화 문서)
+- `/home/jrpark/ldm-eki-release.v1.0/docs/testing/TEST_RESULTS_FINAL.md`
+- `/home/jrpark/ldm-eki-release.v1.0/docs/testing/ISSUES_FOUND.md`
+- `/home/jrpark/ldm-eki-release.v1.0/docs/testing/FIXES_APPLIED.md`
+- 테스트 결과: `test/eki_options/*.png` (16개 조합 결과)
+
+### 3. 알고리즘 설정
+- `input/eki.conf` (EKI 파라미터 설정)
+- `input/eki_settings.txt` (legacy)
+- IPC 설정 전송: `src/eki/eki_shm_config.py`
+
+### 4. 수렴 진단 도구
+- `util/diagnose_convergence_issue.py` (있다면)
+- 로그 파일: `logs/python_eki_output.log`
+- 디버그 데이터: `logs/debug/eki_debug_data.npz`
+
+### 5. 수학적 구현 상세
+- Kalman gain 계산: `Optimizer_EKI_np.py`의 Inverse 클래스
+- 공분산 행렬 계산
+- 적응형 스텝 크기 조절
+- Regularization 구현
+
+## 조사 방법
+
+### 알고리즘 구현 분석
+```bash
+# EKI 관련 함수 찾기
+grep -n "def.*EnKF" src/eki/Optimizer_EKI_np.py
+grep -n "def.*Adaptive" src/eki/Optimizer_EKI_np.py
+grep -n "def.*Localiz" src/eki/Optimizer_EKI_np.py
+grep -n "def.*Regulariz" src/eki/Optimizer_EKI_np.py
+
+# 수학 함수 찾기
+grep -n "np.linalg" src/eki/Optimizer_EKI_np.py
+grep -n "svd\|SVD" src/eki/Optimizer_EKI_np.py
+grep -n "pinv\|pseudo" src/eki/Optimizer_EKI_np.py
+```
+
+### 테스트 결과 분석
+```bash
+# LOCALIZED 테스트 관련
+ls -la test/eki_options/*.png 2>/dev/null
+ls -la ../ldm-eki-release.v1.0/test/eki_options/*.png 2>/dev/null
+
+# 로그에서 수렴 패턴 찾기
+grep "Iteration\|convergence" logs/python_eki_output.log
+grep "Error\|Warning" logs/python_eki_output.log
+```
+
+### Git 히스토리
+```bash
+# 알고리즘 수정 관련
+git log --grep="EnKF\|EKI\|Kalman" --oneline
+git log --grep="convergence\|adaptive" --oneline
+git log --grep="localized\|regulariz" --oneline
+git log -p src/eki/Optimizer_EKI_np.py
+```
+
+## 보고서 작성 구조
+
+### 1. 개요 (약 200줄)
+- 앙상블 칼만 역산의 이론적 배경
+- LDM-EKI에서의 적용 목적
+- 방사능 소스 역추정 문제의 특징
+- 주요 도전 과제
+
+### 2. 알고리즘 구현 상세 (약 600줄)
+
+#### 2.1 Standard EnKF (Ensemble Kalman Filter)
+```python
+def EnKF(self, X, HX, y, R, tol=0):
+    """
+    표준 앙상블 칼만 필터
+
+    수학적 공식:
+    X_a = X_f + K(y - HX_f)
+    K = P_f H^T (HP_f H^T + R)^{-1}
+
+    where:
+    - X_f: 사전 앙상블 (n_state × n_ensemble)
+    - X_a: 사후 앙상블
+    - K: 칼만 이득
+    - P_f: 사전 공분산
+    - H: 관측 연산자
+    - R: 관측 오차 공분산
+    """
+```
+- 구현 코드 상세 분석
+- 행렬 연산 최적화
+- 수치 안정성 고려사항
+
+#### 2.2 Adaptive EnKF
+```python
+def Adaptive_EnKF(self, X, HX, y, R, alpha_0=1.0):
+    """
+    적응형 스텝 크기를 가진 EnKF
+
+    특징:
+    - 자동 스텝 크기 조절
+    - 비선형성이 강한 문제에 효과적
+    - 수렴 속도 개선
+
+    알고리즘:
+    1. 표준 EnKF 업데이트 계산
+    2. 최적 스텝 크기 α 계산
+    3. X_a = X_f + α * ΔX
+    """
+```
+- 스텝 크기 계산 방법
+- 수렴 가속 메커니즘
+- 안정성 vs 속도 트레이드오프
+
+#### 2.3 Localized EnKF (비활성화됨)
+```python
+def EnKF_with_Localizer(self, X, HX, y, R, loc_radius):
+    """
+    공분산 국소화를 적용한 EnKF
+
+    목적:
+    - 가짜 상관관계 제거
+    - 작은 앙상블 크기에서 안정성 향상
+
+    Gaspari-Cohn 함수:
+    ρ(r) = exp(-r²/2L²)
+
+    문제점:
+    - 물리적 타당성 부족
+    - v1.0에서 비활성화
+    """
+```
+- 구현 상세
+- 발견된 3개 버그와 수정 내역
+- 비활성화 이유 분석
+
+#### 2.4 Regularized EnKF
+```python
+def REnKF(self, X, HX, y, R, lambda_reg=1.0):
+    """
+    정규화 항을 추가한 EnKF
+
+    목적 함수:
+    J(x) = ||y - H(x)||²_R + λ||x - x_b||²_B
+
+    장점:
+    - 과적합 방지
+    - 부드러운 해 유도
+    - 물리적 제약 적용 가능
+    """
+```
+- 정규화 파라미터 선택
+- 제약조건 적용 방법
+- 성능 영향 분석
+
+#### 2.5 EnRML (Ensemble Randomized Maximum Likelihood)
+```python
+def EnRML(self, X, HX, y, R, n_iter=1):
+    """
+    앙상블 기반 최대우도 추정
+
+    특징:
+    - 반복적 업데이트
+    - 강한 비선형성 처리
+    - 계산 비용 높음
+    """
+```
+
+#### 2.6 Multiple Data Assimilation
+```python
+def EnKF_MDA(self, X, HX, y, R, n_assimilation=4):
+    """
+    다중 데이터 동화
+
+    개념:
+    - 관측값을 여러 번 나누어 동화
+    - 각 단계에서 부분 관측 사용
+    - 비선형성 완화
+    """
+```
+
+### 3. 알고리즘 검증 프로세스 (약 400줄)
+
+#### 3.1 16가지 조합 테스트
+**테스트 매트릭스:**
+| Test | ADAPTIVE | LOCALIZED | REGULARIZATION | MDA | 결과 |
+|------|----------|-----------|----------------|-----|------|
+| 01   | Off      | Off       | Off            | Off | ✅ Pass |
+| 02   | On       | Off       | Off            | Off | ✅ Pass |
+| 03   | Off      | On        | Off            | Off | ⚠️ 물리적 문제 |
+| 04   | On       | On        | Off            | Off | ⚠️ 물리적 문제 |
+| ...  | ...      | ...       | ...            | ... | ... |
+| 16   | On       | On        | On             | On  | ⚠️ 물리적 문제 |
+
+#### 3.2 발견된 문제와 해결
+
+**Bug 1: Shape Broadcasting Error**
+```python
+# 문제 코드
+C_DDh_scalar = self.centralized_localizer(num_states, dX.shape[0]) * C_DD
+# ValueError: shapes (24,72) (24,24) not aligned
+
+# 수정 코드
+C_DDh_scalar = np.outer(
+    self.centralized_localizer(num_states, num_states),
+    self.centralized_localizer(dX.shape[0], dX.shape[0])
+)
+C_DD_localized = C_DDh_scalar * C_DD
+```
+
+**Bug 2: Premature Convergence**
+```python
+# 문제: T_n 업데이트 순서 오류
+# 수정: 올바른 순서로 변경
+T_n = T_n1  # 이전 값 사용
+convergence_metric = compute_convergence(...)
+T_n1 = new_value  # 다음 반복을 위해 업데이트
+```
+
+**Bug 3: SVD Convergence Failure**
+```python
+# 문제 코드
+Cpp_inv = np.linalg.pinv(Cpp)
+# LinAlgError: SVD did not converge
+
+# 수정 코드
+Cpp_inv = np.linalg.pinv(Cpp, rcond=1e-10)
+```
+
+#### 3.3 물리적 타당성 검증
+- 질량 보존 체크
+- 음수 방출량 방지
+- 공간적 연속성
+- 시간적 일관성
+
+### 4. 수렴 특성 분석 (약 300줄)
+
+#### 4.1 수렴 기준
+```python
+def _convergence(self, dX, X):
+    """
+    수렴 판정 기준
+
+    상대 변화량:
+    δ = ||X_new - X_old|| / ||X_old||
+
+    수렴 조건:
+    δ < tolerance (기본값: 0.01)
+    """
+```
+
+#### 4.2 수렴 패턴 분석
+- 전형적인 수렴 곡선
+- 발산 케이스 분석
+- 진동 현상 원인
+- 최적 앙상블 크기
+
+#### 4.3 수렴 개선 전략
+- 앙상블 크기 증가 (50 → 100)
+- 적응형 스텝 크기 사용
+- 정규화 적용
+- 초기 추정값 개선
+
+### 5. 성능 최적화 (약 200줄)
+
+#### 5.1 행렬 연산 최적화
+- NumPy 벡터화 활용
+- BLAS/LAPACK 최적화
+- 메모리 사용 최소화
+- 캐시 친화적 코드
+
+#### 5.2 병렬화 가능성
+- 앙상블 멤버 병렬 처리
+- 행렬 연산 병렬화
+- GPU 가속 가능성
+
+#### 5.3 계산 복잡도
+- 시간 복잡도: O(n_ensemble × n_state²)
+- 공간 복잡도: O(n_ensemble × n_state)
+- 스케일링 특성
+
+### 6. 파라미터 튜닝 가이드 (약 250줄)
+
+#### 6.1 앙상블 크기 선택
+```
+권장 앙상블 크기:
+- 테스트: 50
+- 일반 사용: 100
+- 고정밀: 200+
+
+고려사항:
+- 상태 변수 개수 (24 = 8시간 × 3소스)
+- 관측값 개수 (3456 = 216시간 × 16수용체)
+- 계산 자원
+```
+
+#### 6.2 알고리즘 옵션 선택
+```
+시나리오별 권장 설정:
+
+1. 빠른 테스트:
+   ADAPTIVE: Off
+   LOCALIZED: Off (강제)
+   REGULARIZATION: Off
+   ENSEMBLE_SIZE: 50
+
+2. 표준 실행:
+   ADAPTIVE: On
+   LOCALIZED: Off (강제)
+   REGULARIZATION: Off
+   ENSEMBLE_SIZE: 100
+
+3. 고정밀 분석:
+   ADAPTIVE: On
+   LOCALIZED: Off (강제)
+   REGULARIZATION: On
+   ENSEMBLE_SIZE: 200
+   LAMBDA_REG: 0.1
+```
+
+#### 6.3 수렴 파라미터
+- MAX_ITERATIONS: 20-50
+- CONVERGENCE_TOLERANCE: 0.01-0.001
+- DIVERGENCE_THRESHOLD: 10.0
+
+### 7. 검증 결과 요약 (약 200줄)
+
+#### 7.1 정량적 성과
+- 수렴 성공률: 87.5% (LOCALIZED 제외)
+- 평균 반복 횟수: 8-15회
+- 추정 정확도: ±10% 이내
+- 계산 시간: 5-15분
+
+#### 7.2 알고리즘별 비교
+| 알고리즘 | 수렴속도 | 정확도 | 안정성 | 계산비용 |
+|---------|---------|--------|--------|----------|
+| Standard EnKF | 중간 | 높음 | 높음 | 낮음 |
+| Adaptive EnKF | 빠름 | 높음 | 중간 | 중간 |
+| Regularized | 느림 | 매우높음 | 매우높음 | 중간 |
+| EnRML | 느림 | 높음 | 중간 | 높음 |
+
+#### 7.3 한계점과 개선방향
+- LOCALIZED 옵션 재설계 필요
+- 비선형성 강한 케이스 처리
+- 실시간 처리 최적화
+- 불확실성 정량화 개선
+
+### 8. 디버깅 및 진단 도구 (약 150줄)
+
+#### 8.1 디버그 데이터 수집
+```python
+# eki_debug_logger.py
+class EKIDebugLogger:
+    def log_iteration(self, iteration, X, HX, innovation):
+        """각 반복마다 상태 저장"""
+
+    def save_to_npz(self):
+        """NPZ 파일로 압축 저장"""
+```
+
+#### 8.2 수렴 진단 도구
+- 잔차 플롯
+- 앙상블 스프레드 분석
+- 혁신 벡터 통계
+- 상관관계 매트릭스
+
+#### 8.3 문제 해결 체크리스트
+1. 발산 시: 앙상블 크기 증가
+2. 느린 수렴: ADAPTIVE 활성화
+3. 진동: REGULARIZATION 적용
+4. 비물리적 해: 초기값 개선
+
+### 9. 참고 문헌 및 이론 (약 100줄)
+- Evensen, G. (2009). Data Assimilation: The Ensemble Kalman Filter
+- Iglesias et al. (2013). Ensemble Kalman methods for inverse problems
+- Emerick & Reynolds (2013). Ensemble smoother with multiple data assimilation
+- Chen & Oliver (2012). Localization and regularization for iterative ensemble smoothers
+
+## 작성 시 주의사항
+
+1. **수학적 엄밀성**
+   - 모든 수식 LaTeX 스타일로 표기
+   - 변수 정의 명확히
+   - 가정 사항 명시
+
+2. **코드와 이론 연결**
+   - 수식 → 코드 대응 관계
+   - 구현 선택 이유
+   - 수치적 고려사항
+
+3. **검증 증거 제시**
+   - 테스트 결과 그래프
+   - 수렴 곡선
+   - 에러 통계
+
+4. **실용적 가이드**
+   - 파라미터 선택 flowchart
+   - 트러블슈팅 가이드
+   - 모범 사례
+
+## 최종 산출물
+- 파일명: `/home/jrpark/ldm-eki-release.v.beta/docs/알고리즘_검증_보고서.txt`
+- 예상 분량: 2,500줄 이상
+- 언어: 한국어
+- 형식: 학술 논문 스타일 (수식, 그래프, 표 포함)

@@ -39,7 +39,7 @@ EKIWriter::~EKIWriter() {
 ///
 /// @details
 /// Creates two shared memory segments:
-/// 1. Configuration segment (128 bytes) - Contains all EKI parameters
+/// 1. Configuration segment (84 bytes) - Contains all EKI parameters
 /// 2. Data segment (variable size) - Contains observation data
 ///
 /// The configuration segment includes:

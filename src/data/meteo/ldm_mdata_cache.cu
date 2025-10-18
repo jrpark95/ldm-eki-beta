@@ -263,7 +263,7 @@ bool LDM::loadSingleMeteoFile(int file_index, FlexPres*& pres_data, FlexUnis*& u
         std::cout << "... " << hgt_data[dimZ_GFS-1] << std::endl;
     }
     
-    // DRHO 계산 (기존 코드와 동일)
+    // DRHO calculation (same as legacy code)
     for (int i = 0; i < dimX_GFS+1; ++i) {
         for (int j = 0; j < dimY_GFS; ++j) {
             float rho0 = pres_data[i * dimY_GFS * dimZ_GFS + j * dimZ_GFS].RHO;
@@ -355,7 +355,7 @@ bool LDM::preloadAllEKIMeteorologicalData() {
         thread.join();
     }
     
-    // 결과 확인
+    // Verify results
     bool all_success = true;
     for (int i = 0; i < num_files; i++) {
         if (!results[i]) {
@@ -498,7 +498,7 @@ bool LDM::preloadAllEKIMeteorologicalData() {
         return false;
     }
     
-    // 초기 상태로 첫 번째 기상자료 로드 (과거/미래 동일하게)
+    // Load first meteorological data as initial state (past/future identical)
     if (g_eki_meteo.num_time_steps > 0) {
         FlexPres* first_pres_ptr;
         FlexUnis* first_unis_ptr;

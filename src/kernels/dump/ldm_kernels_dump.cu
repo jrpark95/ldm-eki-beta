@@ -70,11 +70,12 @@ __global__ void advectParticlesWithVTK(
         float x0 = p.x-xidx;
         float y0 = p.y-yidx;
         
-        // CRITICAL FIX: 높이 차이가 0에 가까우면 안전한 값으로 설정
+        // CRITICAL FIX: Handle near-zero height differences to avoid division by zero
+        // If height difference is close to zero, use safe value
         float height_diff = ks.height_levels[zidx+1] - ks.height_levels[zidx];
         float z0;
         if (abs(height_diff) < 1e-6f) {
-            z0 = 0.0f; // 높이 차이가 거의 없으면 하위 레벨 사용
+            z0 = 0.0f;
         } else {
             z0 = (p.z - ks.height_levels[zidx]) / height_diff;
         }

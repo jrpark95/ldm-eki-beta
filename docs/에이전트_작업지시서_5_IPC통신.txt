@@ -1,0 +1,610 @@
+# 에이전트 작업 지시서 #5: IPC 통신 시스템 보고서 작성
+
+## 에이전트 역할
+당신은 LDM-EKI 시스템의 프로세스 간 통신(IPC) 메커니즘을 분석하고 문서화하는 시스템 통신 전문가입니다.
+
+## 작업 목표
+"IPC_통신_시스템_보고서.txt" 파일을 작성하여 C++와 Python 간의 모든 데이터 통신 메커니즘, 프로토콜, 구현 상세를 완벽하게 문서화합니다.
+
+## ⚠️ 중요: 완전성 체크리스트
+아래 모든 파일을 **반드시** 읽고 분석해야 합니다. 하나라도 빠뜨리면 안 됩니다.
+
+### 필수 확인 파일 체크리스트
+
+#### C++ IPC 구현 (8개 파일)
+- [ ] `src/ipc/ldm_eki_writer.cu` (365줄, 전체 읽기)
+- [ ] `src/ipc/ldm_eki_writer.cuh` (257줄, 전체 읽기)
+- [ ] `src/ipc/ldm_eki_reader.cu` (252줄, 전체 읽기)
+- [ ] `src/ipc/ldm_eki_reader.cuh` (177줄, 전체 읽기)
+- [ ] `src/main_eki.cu`의 IPC 초기화 및 사용 부분
+- [ ] `src/core/ldm.cuh`의 EKIWriter, EKIReader 멤버
+- [ ] `src/core/ldm.cu`의 IPC 관련 함수
+- [ ] `src/data/config/ldm_struct.cuh`의 IPC 구조체 정의
+
+#### Python IPC 구현 (6개 파일)
+- [ ] `src/eki/eki_ipc_reader.py` (387줄, 전체 읽기)
+- [ ] `src/eki/eki_ipc_writer.py` (218줄, 전체 읽기)
+- [ ] `src/eki/eki_shm_config.py` (297줄, 전체 읽기)
+- [ ] `src/eki/Model_Connection_np_Ensemble.py`의 IPC 함수들
+- [ ] `src/eki/RunEstimator.py`의 IPC 초기화
+- [ ] `src/eki/memory_doctor.py` (IPC 디버깅)
+
+#### 공유 메모리 구조체 정의
+- [ ] `EKIConfigFull` 구조체 (84 바이트)
+- [ ] `EKIFullData` 구조체
+- [ ] `EnsembleHeader` 구조체
+- [ ] 데이터 레이아웃 및 패딩
+
+## 조사해야 할 내용 (극도로 상세하게)
+
+### 1. IPC 아키텍처 전체 파악
+```bash
+# C++ Writer 클래스 분석
+grep -n "class.*Writer" src/ipc/*.cuh
+grep -n "writeObservations\|writeEnsemble" src/ipc/*.cu
+grep -n "createSharedMemory\|openSharedMemory" src/ipc/*.cu
+
+# C++ Reader 클래스 분석
+grep -n "class.*Reader" src/ipc/*.cuh
+grep -n "readEnsemble\|waitFor" src/ipc/*.cu
+grep -n "checkDataReady" src/ipc/*.cu
+
+# Python IPC 함수 분석
+grep -n "def.*shm\|def.*shared" src/eki/*.py
+grep -n "mmap\|struct\.pack\|struct\.unpack" src/eki/*.py
+grep -n "os\.open.*O_CREAT\|os\.open.*O_RDWR" src/eki/*.py
+```
+
+### 2. 공유 메모리 세그먼트 분석
+```bash
+# 공유 메모리 파일 이름 패턴
+grep -r "ldm_eki_" src/ --include="*.cu" --include="*.py"
+
+# 세그먼트 목록
+/dev/shm/ldm_eki_full_config      # 84 bytes, 전체 설정
+/dev/shm/ldm_eki_data             # 관측값 (prior 실행)
+/dev/shm/ldm_eki_ensemble_*       # 앙상블 상태 (반복마다)
+/dev/shm/ldm_eki_ensemble_obs_*   # 앙상블 관측값
+/dev/shm/ldm_eki_true_emissions   # 참값 방출 시계열
+/dev/shm/ldm_eki_sync_*          # 동기화 플래그
+```
+
+### 3. 데이터 구조체 상세 분석
+
+#### EKIConfigFull 구조체 (84 바이트)
+```cpp
+struct EKIConfigFull {
+    int num_states;           // 4 bytes
+    int num_ensemble;         // 4 bytes
+    int num_timesteps;        // 4 bytes
+    int num_receptors;        // 4 bytes
+    int random_seed;          // 4 bytes
+    int max_iterations;       // 4 bytes
+    float conv_threshold;     // 4 bytes
+    float div_threshold;      // 4 bytes
+    // padding or additional fields
+    float decay_constant;     // 4 bytes (추가됨)
+    char adaptive_eki[4];     // 4 bytes
+    char localized_eki[4];    // 4 bytes
+    char regularized_eki[4];  // 4 bytes
+    // ... 총 84 bytes
+};
+```
+
+#### 데이터 패킹/언패킹
+```python
+# Python unpacking
+struct.unpack('iiiiiiffff4s4s4s...', shm_data[:84])
+
+# C++ packing
+memcpy(shm_ptr, &config, sizeof(EKIConfigFull));
+```
+
+### 4. 통신 프로토콜 흐름
+
+#### Phase 1: 초기화 및 설정 전송
+```
+C++ (main_eki.cu)
+    ↓
+1. 설정 파일 읽기 (eki_settings.txt)
+2. EKIConfigFull 구조체 생성
+3. /dev/shm/ldm_eki_full_config 생성 (O_CREAT | O_RDWR)
+4. mmap() 및 데이터 쓰기
+5. msync() 호출
+    ↓
+Python (RunEstimator.py)
+    ↓
+6. /dev/shm/ldm_eki_full_config 열기 (O_RDONLY)
+7. mmap.mmap() 으로 매핑
+8. struct.unpack()으로 파싱
+9. 설정 딕셔너리 생성
+```
+
+#### Phase 2: Prior 실행 및 관측값 전송
+```
+C++ (LDM::runSimulation_eki_init())
+    ↓
+1. 참값 시뮬레이션 실행
+2. 수용체별 관측값 수집
+3. EKIWriter::writeObservations() 호출
+4. /dev/shm/ldm_eki_data 생성
+5. 헤더 + 데이터 쓰기
+    ↓
+Python (Model_Connection_np_Ensemble.py)
+    ↓
+6. receive_gamma_dose_matrix_shm() 호출
+7. 데이터 읽기 및 reshape
+8. Column-major로 변환
+```
+
+#### Phase 3: 앙상블 반복 루프
+```
+반복 i = 1 to max_iterations:
+
+Python → C++: 앙상블 상태 전송
+    1. write_ensemble_to_shm() 호출
+    2. /dev/shm/ldm_eki_ensemble_i 생성
+    3. Row-major로 평탄화
+    4. 헤더 + 데이터 쓰기
+    5. 동기화 플래그 설정
+
+C++: 앙상블 상태 읽기
+    6. EKIReader::waitForEnsembleData() 호출
+    7. 동기화 플래그 확인 (polling)
+    8. readEnsembleStates() 호출
+    9. 데이터 파싱 및 저장
+
+C++: 앙상블 시뮬레이션 실행
+    10. 각 앙상블 멤버별 시뮬레이션
+    11. 관측값 수집
+
+C++ → Python: 앙상블 관측값 전송
+    12. writeEnsembleObservations() 호출
+    13. /dev/shm/ldm_eki_ensemble_obs_i 생성
+    14. 3D 배열 쓰기
+
+Python: 앙상블 관측값 읽기
+    15. receive_ensemble_observations_shm() 호출
+    16. 데이터 reshape 및 변환
+    17. EKI 업데이트 수행
+```
+
+### 5. Row-major vs Column-major 변환
+
+#### C++ (Row-major)
+```cpp
+// 배열 레이아웃: [ensemble][state]
+float data[num_ensemble][num_states];
+// 메모리: E0S0, E0S1, ..., E0Sn, E1S0, E1S1, ...
+```
+
+#### Python (Column-major for states)
+```python
+# NumPy 배열: (num_states, num_ensemble)
+# 메모리: S0E0, S0E1, ..., S0En, S1E0, S1E1, ...
+
+# 변환 필요:
+data_python = data_c.reshape(num_ensemble, num_states).T
+```
+
+### 6. 동기화 메커니즘
+
+#### Polling 기반 동기화
+```cpp
+// C++ Reader
+bool waitForData(int timeout_ms) {
+    auto start = std::chrono::steady_clock::now();
+    while (!checkDataReady()) {
+        if (timeout_exceeded) return false;
+        std::this_thread::sleep_for(10ms);
+    }
+    return true;
+}
+```
+
+#### 플래그 기반 신호
+```python
+# Python Writer
+def set_ready_flag(iteration):
+    flag_path = f"/dev/shm/ldm_eki_sync_{iteration}"
+    with open(flag_path, 'wb') as f:
+        f.write(struct.pack('i', 1))
+```
+
+### 7. 에러 처리 및 복구
+
+#### C++ 에러 처리
+```cpp
+// 메모리 매핑 실패
+if (shm_fd == -1) {
+    fprintf(stderr, "[ERROR] Failed to create shared memory: %s\n",
+            strerror(errno));
+    return false;
+}
+
+// 타임아웃 처리
+if (!waitForData(30000)) {  // 30초 타임아웃
+    fprintf(stderr, "[ERROR] Timeout waiting for Python data\n");
+    cleanup_and_exit();
+}
+```
+
+#### Python 에러 처리
+```python
+try:
+    shm_fd = os.open(shm_path, os.O_RDONLY)
+except FileNotFoundError:
+    print(f"[ERROR] Shared memory not found: {shm_path}")
+    print("Waiting for C++ to create shared memory...")
+    time.sleep(1)
+    retry_count += 1
+```
+
+### 8. 메모리 관리 및 정리
+
+#### 자동 정리 메커니즘
+```cpp
+// C++ destructor
+EKIWriter::~EKIWriter() {
+    if (shm_ptr) munmap(shm_ptr, shm_size);
+    if (shm_fd != -1) close(shm_fd);
+    // shm_unlink()는 호출하지 않음 (Python이 읽어야 함)
+}
+```
+
+#### 수동 정리 (cleanup.py)
+```python
+def clean_shared_memory():
+    shm_files = glob.glob('/dev/shm/ldm_eki_*')
+    for f in shm_files:
+        os.remove(f)
+```
+
+## 보고서 작성 구조
+
+### 1. 개요 (약 200줄)
+- IPC의 필요성과 역할
+- POSIX 공유 메모리 선택 이유
+- 대안 기술 비교 (소켓, 파이프, MQ)
+- 시스템 아키텍처 다이어그램
+
+### 2. IPC 아키텍처 상세 (약 500줄)
+
+#### 2.1 C++ IPC 구현
+##### EKIWriter 클래스
+```cpp
+class EKIWriter {
+public:
+    bool initialize(const std::string& prefix);
+    bool writeObservations(float* data, size_t size);
+    bool writeEnsembleObservations(float* data,
+                                   int ensemble, int timesteps, int receptors);
+    bool writeConfiguration(const EKIConfigFull& config);
+
+private:
+    int createSharedMemory(const std::string& name, size_t size);
+    void* mapMemory(int fd, size_t size);
+    bool writeHeader(void* ptr, const DataHeader& header);
+    void cleanup();
+};
+```
+- 각 메서드 구현 상세
+- 메모리 매핑 전략
+- 에러 처리 로직
+
+##### EKIReader 클래스
+```cpp
+class EKIReader {
+public:
+    bool waitForEnsembleData(int iteration, int timeout_ms);
+    bool readEnsembleStates(float* output, int& num_ensemble, int& num_states);
+    bool checkDataReady(int iteration);
+
+private:
+    void* openAndMapMemory(const std::string& name, size_t& size);
+    bool validateHeader(const DataHeader& header);
+    void pollForData(int timeout_ms);
+};
+```
+
+#### 2.2 Python IPC 구현
+##### eki_ipc_reader.py
+```python
+def receive_gamma_dose_matrix_shm(num_timesteps, num_receptors):
+    """C++에서 관측값 읽기"""
+
+def receive_ensemble_observations_shm(num_ensemble, num_timesteps, num_receptors):
+    """앙상블 관측값 읽기"""
+
+def wait_for_shm_file(path, timeout=30):
+    """공유 메모리 파일 대기"""
+```
+
+##### eki_ipc_writer.py
+```python
+def write_ensemble_to_shm(ensemble_data, iteration):
+    """앙상블 상태를 C++로 전송"""
+
+def create_shm_with_header(path, header, data):
+    """헤더와 데이터를 포함한 공유 메모리 생성"""
+```
+
+##### eki_shm_config.py
+```python
+def load_config_from_shared_memory():
+    """C++에서 설정 읽기"""
+
+class EKIConfigManager:
+    """설정 캐싱 및 관리"""
+```
+
+### 3. 데이터 구조 및 프로토콜 (약 600줄)
+
+#### 3.1 공유 메모리 구조체
+- EKIConfigFull (84 bytes) - 전체 필드 설명
+- DataHeader - 메타데이터
+- EnsembleHeader - 앙상블 데이터 헤더
+- 메모리 레이아웃 다이어그램
+- 패딩 및 정렬 고려사항
+
+#### 3.2 데이터 마샬링/언마샬링
+- C++ → Python 변환
+  - struct packing
+  - 엔디언 고려
+  - 타입 매핑
+- Python → C++ 변환
+  - NumPy → raw bytes
+  - Row/Column major 변환
+  - 평탄화 알고리즘
+
+#### 3.3 프로토콜 시퀀스
+- 초기화 핸드셰이크
+- 데이터 전송 프로토콜
+- 동기화 프로토콜
+- 종료 프로토콜
+
+### 4. 동기화 및 동시성 (약 400줄)
+
+#### 4.1 동기화 메커니즘
+- Polling 기반 동기화
+- 플래그 파일 사용
+- 타임아웃 처리
+- Busy-waiting vs Sleep
+
+#### 4.2 동시성 이슈
+- Race condition 방지
+- Reader-Writer 문제
+- 메모리 일관성
+- Cache coherence
+
+#### 4.3 성능 최적화
+- 메모리 매핑 전략
+- 버퍼 크기 최적화
+- Polling 간격 조정
+- Zero-copy 기법
+
+### 5. 에러 처리 및 복구 (약 350줄)
+
+#### 5.1 에러 유형
+- 메모리 할당 실패
+- 파일 시스템 에러
+- 타임아웃
+- 데이터 손상
+- 프로세스 크래시
+
+#### 5.2 에러 감지
+- 체크섬 검증
+- 헤더 검증
+- 크기 검증
+- Magic number 확인
+
+#### 5.3 복구 전략
+- 재시도 로직
+- Fallback 메커니즘
+- Graceful degradation
+- 자동 정리
+
+### 6. 디버깅 및 모니터링 (약 400줄)
+
+#### 6.1 Memory Doctor 통합
+- 모든 전송 로깅
+- 데이터 덤프
+- 통계 수집
+- 비교 분석
+
+#### 6.2 디버깅 도구
+- 공유 메모리 검사
+- 데이터 시각화
+- 프로토콜 추적
+- 성능 프로파일링
+
+#### 6.3 모니터링 지표
+- 전송 지연시간
+- 처리량
+- 에러율
+- 메모리 사용량
+
+### 7. 실제 사용 시나리오 (약 500줄)
+
+#### 7.1 정상 실행 플로우
+```
+1. C++ 시작 → 설정 전송
+2. Python 시작 → 설정 읽기
+3. Prior 시뮬레이션 → 관측값 전송
+4. 앙상블 초기화 → 상태 전송
+5. 반복 루프 (10-20회)
+   - Python → C++: 상태
+   - C++ 시뮬레이션
+   - C++ → Python: 관측값
+   - Python EKI 업데이트
+6. 수렴 → 종료
+```
+
+#### 7.2 에러 시나리오
+- Python 크래시 → C++ 타임아웃
+- C++ 크래시 → Python 대기
+- 네트워크 파티션 (불가능, 로컬 메모리)
+- 메모리 부족
+
+#### 7.3 성능 벤치마크
+- 전송 속도: ~100MB/s
+- 지연시간: <1ms
+- CPU 오버헤드: <5%
+
+### 8. 개선 제안 및 향후 계획 (약 200줄)
+
+#### 8.1 현재 한계점
+- Polling 오버헤드
+- 고정 크기 버퍼
+- 단방향 통신
+- 에러 복구 제한
+
+#### 8.2 개선 방안
+- Event-driven 동기화
+- 동적 버퍼 할당
+- 양방향 통신
+- Checkpoint/Restart
+
+#### 8.3 대안 기술
+- gRPC 도입 고려
+- ZeroMQ 활용
+- RDMA 지원
+- GPU Direct
+
+### 9. 코드 예제 및 사용법 (약 400줄)
+
+#### 9.1 C++ 사용 예제
+```cpp
+// Writer 초기화
+EKIWriter writer;
+writer.initialize("ldm_eki");
+
+// 데이터 전송
+float observations[216][16];
+writer.writeObservations(&observations[0][0], 216*16);
+
+// Reader 사용
+EKIReader reader;
+if (reader.waitForEnsembleData(iteration, 30000)) {
+    reader.readEnsembleStates(ensemble_states, n_ens, n_state);
+}
+```
+
+#### 9.2 Python 사용 예제
+```python
+# 설정 읽기
+config = load_config_from_shared_memory()
+
+# 관측값 읽기
+obs = receive_gamma_dose_matrix_shm(216, 16)
+
+# 앙상블 전송
+write_ensemble_to_shm(ensemble_data, iteration=1)
+```
+
+#### 9.3 디버깅 예제
+```bash
+# 공유 메모리 확인
+ls -la /dev/shm/ldm_eki*
+
+# 데이터 덤프
+hexdump -C /dev/shm/ldm_eki_full_config
+
+# Memory Doctor 활성화
+export MEMORY_DOCTOR_MODE=On
+```
+
+### 10. 참조 및 부록 (약 150줄)
+
+#### 10.1 POSIX 공유 메모리 API
+- shm_open()
+- mmap()
+- msync()
+- munmap()
+
+#### 10.2 Python mmap 모듈
+- mmap.mmap()
+- mmap.ACCESS_READ
+- mmap.flush()
+
+#### 10.3 성능 측정 결과
+- 벤치마크 데이터
+- 프로파일링 결과
+- 비교 분석
+
+## 코드 완전성 확인 명령어
+
+### 반드시 실행해야 할 명령어
+```bash
+# 1. 모든 IPC 파일 읽기
+for file in src/ipc/*.cu src/ipc/*.cuh; do
+    echo "=== $file ==="
+    cat $file
+done
+
+# 2. Python IPC 모듈 읽기
+for file in src/eki/eki_ipc*.py src/eki/eki_shm*.py; do
+    echo "=== $file ==="
+    cat $file
+done
+
+# 3. 구조체 정의 확인
+grep -A 20 "struct.*EKI" src/data/config/*.cuh
+grep -A 20 "struct.*Header" src/ipc/*.cuh
+
+# 4. 함수 호출 관계
+grep "writeObservations\|readEnsemble" src/*.cu src/simulation/*.cu
+grep "receive_.*_shm\|write_.*_shm" src/eki/*.py
+
+# 5. 공유 메모리 경로
+grep -r '"/dev/shm/ldm_eki' src/
+
+# 6. 동기화 코드
+grep -r "waitFor\|poll\|sync" src/ipc/
+grep -r "sleep\|wait" src/eki/*ipc*.py
+```
+
+## 작성 시 주의사항
+
+1. **완전한 코드 인용**
+   - 핵심 함수는 전체 코드 포함
+   - 주석도 함께 인용
+   - 에러 처리 부분 강조
+
+2. **시퀀스 다이어그램**
+   - ASCII 아트로 통신 흐름 표현
+   - 타이밍 다이어그램
+   - 상태 전이도
+
+3. **실제 데이터 예시**
+   - 헤더 구조 hexdump
+   - 실제 전송 데이터 샘플
+   - 로그 출력 예시
+
+4. **트러블슈팅 가이드**
+   - 일반적인 문제와 해결법
+   - 디버깅 체크리스트
+   - FAQ
+
+5. **성능 분석**
+   - 측정 방법
+   - 병목 지점
+   - 최적화 결과
+
+## 최종 체크리스트
+- [ ] src/ipc/ 폴더의 4개 파일 완전 분석
+- [ ] src/eki/*ipc*.py, *shm*.py 파일 완전 분석
+- [ ] 모든 구조체 필드 문서화
+- [ ] 전체 통신 시퀀스 도식화
+- [ ] 에러 처리 경로 모두 포함
+- [ ] Row/Column major 변환 설명
+- [ ] 동기화 메커니즘 상세 설명
+- [ ] 실제 사용 예제 10개 이상
+- [ ] 디버깅 방법 완전 설명
+- [ ] 성능 측정 결과 포함
+
+## 최종 산출물
+- 파일명: `/home/jrpark/ldm-eki-release.v.beta/docs/IPC_통신_시스템_보고서.txt`
+- 예상 분량: 3,500줄 이상
+- 언어: 한국어
+- 형식: 시스템 설계 문서 (코드, 다이어그램, 프로토콜 명세 포함)

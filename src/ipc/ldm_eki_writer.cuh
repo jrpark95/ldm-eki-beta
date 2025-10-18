@@ -161,7 +161,7 @@ struct EKIDataHeader {
 /// ```
 ///
 /// Shared Memory Segments:
-/// - `/dev/shm/ldm_eki_config` : Full configuration (80 bytes)
+/// - `/dev/shm/ldm_eki_config` : Full configuration (84 bytes)
 /// - `/dev/shm/ldm_eki_data` : Initial observations (header + data)
 /// - `/dev/shm/ldm_eki_ensemble_obs_config` : Ensemble dimensions (12 bytes)
 /// - `/dev/shm/ldm_eki_ensemble_obs_data` : Ensemble observations (variable size)
