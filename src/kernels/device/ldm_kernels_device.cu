@@ -145,7 +145,7 @@ __device__ float k_f_qvsat(float p, float t) {
 // INITIALIZATION KERNEL IMPLEMENTATIONS
 // ============================================================================
 
-__global__ void init_curand_states(LDM::LDMpart* d_part, float t0, int num_particles){
+__global__ void initCurandStates(LDM::LDMpart* d_part, float t0, int num_particles){
 
         int idx = threadIdx.x + blockIdx.x * blockDim.x;
         if (idx >= num_particles) return;
@@ -163,7 +163,7 @@ __global__ void init_curand_states(LDM::LDMpart* d_part, float t0, int num_parti
         d_part[idx].randState[0] = localState;
     }
 
-__global__ void update_particle_flags(
+__global__ void updateParticleFlags(
     LDM::LDMpart* d_part, float activationRatio, int num_particles){
 
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -181,7 +181,7 @@ __global__ void update_particle_flags(
         }
     }
 
-__global__ void update_particle_flags_ens(
+__global__ void updateParticleFlagsEnsemble(
     LDM::LDMpart* d_part, float activationRatio, int total_particles, int particles_per_ensemble){
 
         int idx = blockIdx.x * blockDim.x + threadIdx.x;

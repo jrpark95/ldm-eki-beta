@@ -158,7 +158,7 @@ void LDM::runSimulation(){
         activationRatio = (currentTime) / time_end;
         t0 = (currentTime - static_cast<int>(currentTime/time_interval)*time_interval) / time_interval;
 
-        update_particle_flags<<<blocks, threadsPerBlock>>>
+        updateParticleFlags<<<blocks, threadsPerBlock>>>
             (d_part, activationRatio, nop);
         cudaDeviceSynchronize();
         CHECK_KERNEL_ERROR();
@@ -185,7 +185,7 @@ void LDM::runSimulation(){
         ks.T_matrix = d_T_matrix;
         ks.flex_hgt = d_flex_hgt;
 
-        move_part_by_wind_mpi<<<blocks, threadsPerBlock>>>
+        advectParticles<<<blocks, threadsPerBlock>>>
         (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
             device_meteorological_flex_unis0,
             device_meteorological_flex_pres0,
@@ -545,11 +545,11 @@ void LDM::runSimulation_eki(){
             // Ensemble mode: activate particles independently per ensemble
             int total_particles = part.size();
             int particles_per_ensemble = nop;  // Particles per ensemble (10000)
-            update_particle_flags_ens<<<blocks, threadsPerBlock>>>
+            updateParticleFlagsEnsemble<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, total_particles, particles_per_ensemble);
         } else {
             // Single mode: use standard activation
-            update_particle_flags<<<blocks, threadsPerBlock>>>
+            updateParticleFlags<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, nop);
         }
         cudaDeviceSynchronize();
@@ -587,7 +587,7 @@ void LDM::runSimulation_eki(){
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
             int total_particles = part.size();
-            move_part_by_wind_mpi_ens<<<blocks, threadsPerBlock>>>
+            advectParticlesEnsemble<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 device_meteorological_flex_unis0,
                 device_meteorological_flex_pres0,
@@ -596,7 +596,7 @@ void LDM::runSimulation_eki(){
                 total_particles,
                 ks);
         } else {
-            move_part_by_wind_mpi<<<blocks, threadsPerBlock>>>
+            advectParticles<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 device_meteorological_flex_unis0,
                 device_meteorological_flex_pres0,
@@ -661,7 +661,7 @@ void LDM::runSimulation_eki(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[4A");  // Move up 4 lines (only affects terminal, ignored in log file)
+                fprintf(stderr, "\033[6A");  // Move up 6 lines (increased from 4)
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
@@ -676,6 +676,24 @@ void LDM::runSimulation_eki(){
                    past_meteo_index,
                    (future_meteo_index < g_eki_meteo.num_time_steps) ? future_meteo_index : past_meteo_index,
                    t0);
+
+            // Mode information
+            if (is_ensemble_mode) {
+                fprintf(stderr, "\rMode: ENSEMBLE │ Size: %d\033[K\n",
+                        ensemble_size);
+            } else {
+                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)part.size());
+            }
+
+            // VTK status - show "Writing files..." if currently outputting VTK
+            if (!enable_vtk_output) {
+                fprintf(stderr, "\rVTK: Disabled\033[K\n");
+            } else if (timestep % freq_output == 0) {
+                fprintf(stderr, "\rVTK: Writing files (slow)...\033[K\n");
+            } else {
+                fprintf(stderr, "\rVTK: Enabled\033[K\n");
+            }
+
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
             fflush(stderr);
 
@@ -975,11 +993,11 @@ void LDM::runSimulation_eki_dump(){
             // Ensemble mode: activate particles independently per ensemble
             int total_particles = part.size();
             int particles_per_ensemble = nop;  // Particles per ensemble (10000)
-            update_particle_flags_ens<<<blocks, threadsPerBlock>>>
+            updateParticleFlagsEnsemble<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, total_particles, particles_per_ensemble);
         } else {
             // Single mode: use standard activation
-            update_particle_flags<<<blocks, threadsPerBlock>>>
+            updateParticleFlags<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, nop);
         }
         cudaDeviceSynchronize();
@@ -1018,7 +1036,7 @@ void LDM::runSimulation_eki_dump(){
         if (is_ensemble_mode) {
             // Ensemble mode: process all particles (d_nop × ensemble_size)
             int total_particles = part.size();
-            move_part_by_wind_mpi_ens_dump<<<blocks, threadsPerBlock>>>
+            advectParticlesEnsembleWithVTK<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 device_meteorological_flex_unis0,
                 device_meteorological_flex_pres0,
@@ -1028,7 +1046,7 @@ void LDM::runSimulation_eki_dump(){
                 ks);
         } else {
             // Single mode: process d_nop particles
-            move_part_by_wind_mpi_dump<<<blocks, threadsPerBlock>>>
+            advectParticlesWithVTK<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 device_meteorological_flex_unis0,
                 device_meteorological_flex_pres0,
@@ -1093,7 +1111,7 @@ void LDM::runSimulation_eki_dump(){
 
             // Terminal: Use ANSI codes for in-place update (goes to both terminal and log via TeeStreambuf)
             if (!first_time && g_sim.fixedScrollOutput) {
-                fprintf(stderr, "\033[4A");  // Move up 4 lines (only affects terminal, ignored in log file)
+                fprintf(stderr, "\033[6A");  // Move up 6 lines (increased from 4)
             }
 
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
@@ -1108,6 +1126,24 @@ void LDM::runSimulation_eki_dump(){
                    past_meteo_index,
                    (future_meteo_index < g_eki_meteo.num_time_steps) ? future_meteo_index : past_meteo_index,
                    t0);
+
+            // Mode information
+            if (is_ensemble_mode) {
+                fprintf(stderr, "\rMode: ENSEMBLE │ Size: %d\033[K\n",
+                        ensemble_size);
+            } else {
+                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)part.size());
+            }
+
+            // VTK status - show "Writing files..." if currently outputting VTK
+            if (!enable_vtk_output) {
+                fprintf(stderr, "\rVTK: Disabled\033[K\n");
+            } else if (timestep % freq_output == 0) {
+                fprintf(stderr, "\rVTK: Writing files (slow)...\033[K\n");
+            } else {
+                fprintf(stderr, "\rVTK: Enabled\033[K\n");
+            }
+
             fprintf(stderr, "\r-------------------------------------------------\033[K\n");
             fflush(stderr);
 

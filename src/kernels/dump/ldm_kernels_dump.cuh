@@ -51,10 +51,10 @@
  * @note Only used when VTK output is enabled
  * @note Typically called for final iteration or selected timesteps
  *
- * @see move_part_by_wind_mpi() for non-dump version
- * @see move_part_by_wind_mpi_ens_dump() for ensemble dump version
+ * @see advectParticles() for non-dump version
+ * @see advectParticlesEnsembleWithVTK() for ensemble dump version
  */
-__global__ void move_part_by_wind_mpi_dump(
+__global__ void advectParticlesWithVTK(
     LDM::LDMpart* d_part, float t0, int rank, float* d_dryDep, float* d_wetDep, int mesh_nx, int mesh_ny,
     FlexUnis* device_meteorological_flex_unis0,
     FlexPres* device_meteorological_flex_pres0,

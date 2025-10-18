@@ -40,7 +40,7 @@ __device__ __forceinline__ float safe_div(float num, float den) {
 // EKI OBSERVATION SYSTEM IMPLEMENTATION
 // ============================================================================
 
-__global__ void compute_eki_receptor_dose(
+__global__ void computeReceptorDose(
     const LDM::LDMpart* particles,
     const float* receptor_lats, const float* receptor_lons,
     float receptor_capture_radius,
@@ -108,7 +108,7 @@ __global__ void compute_eki_receptor_dose(
     }
 }
 
-__global__ void compute_eki_receptor_dose_ensemble(
+__global__ void computeReceptorDoseEnsemble(
     const LDM::LDMpart* particles,
     const float* receptor_lats, const float* receptor_lons,
     float receptor_capture_radius,

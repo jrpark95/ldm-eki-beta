@@ -383,7 +383,7 @@ void LDM::computeReceptorObservations(int timestep, float currentTime) {
     ks.cunningham_fac = cunningham;
 
     // Call kernel EVERY timestep to accumulate into correct time_idx slot
-    compute_eki_receptor_dose<<<numBlocks, blockSize>>>(
+    computeReceptorDose<<<numBlocks, blockSize>>>(
         d_part,
         d_receptor_lats, d_receptor_lons,
         g_eki.receptor_capture_radius,
@@ -681,7 +681,7 @@ void LDM::computeReceptorObservations_AllEnsembles(int timestep, float currentTi
     ks.cunningham_fac = cunningham;
 
     // Call kernel EVERY timestep to accumulate into correct time_idx slot
-    compute_eki_receptor_dose_ensemble<<<numBlocks, blockSize>>>(
+    computeReceptorDoseEnsemble<<<numBlocks, blockSize>>>(
         d_part,
         d_receptor_lats, d_receptor_lons,
         g_eki.receptor_capture_radius,
@@ -903,7 +903,7 @@ void LDM::computeGridReceptorObservations(int timestep, float currentTime) {
     ks.cunningham_fac = cunningham;
 
     // Grid receptors don't need time_idx - call with num_timesteps=1, time_idx=0
-    compute_eki_receptor_dose<<<numBlocks, blockSize>>>(
+    computeReceptorDose<<<numBlocks, blockSize>>>(
         d_part,
         d_grid_receptor_lats,
         d_grid_receptor_lons,

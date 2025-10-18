@@ -52,9 +52,9 @@
  * @note Dose index: time_idx * num_receptors + r (row-major order)
  * @note Coordinates: Grid to lat/lon: lat = -90 + y*0.5, lon = -179 + x*0.5
  *
- * @see compute_eki_receptor_dose_ensemble() for ensemble version
+ * @see computeReceptorDoseEnsemble() for ensemble version
  */
-__global__ void compute_eki_receptor_dose(
+__global__ void computeReceptorDose(
     const LDM::LDMpart* particles,
     const float* receptor_lats, const float* receptor_lons,
     float receptor_capture_radius,
@@ -105,9 +105,9 @@ __global__ void compute_eki_receptor_dose(
  * @note Index formula: ens_id * (TIME * RECEPT) + time_idx * RECEPT + r
  * @note Matches reference implementation for IPC communication
  *
- * @see compute_eki_receptor_dose() for single-mode version
+ * @see computeReceptorDose() for single-mode version
  */
-__global__ void compute_eki_receptor_dose_ensemble(
+__global__ void computeReceptorDoseEnsemble(
     const LDM::LDMpart* particles,
     const float* receptor_lats, const float* receptor_lons,
     float receptor_capture_radius,

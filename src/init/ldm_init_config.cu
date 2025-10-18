@@ -88,26 +88,19 @@ void LDM::loadSimulationConfiguration(){
     // Parse particle parameters
     nop = g_config.getInt("Total_number_of_particle", 10000);   // Total particle count
 
-    // Parse atmospheric conditions
-    isRural = g_config.getInt("Rural/Urban", 1);                // 1=Rural, 0=Urban
-    isPG = g_config.getInt("Pasquill-Gifford/Briggs-McElroy-Pooler", 1);  // Stability scheme
-    isGFS = g_config.getInt("Data", 1);                         // Meteorological data source
+    // Hardcode atmospheric conditions and meteorological data (v1.0 production settings)
+    isRural = 1;  // HARDCODED: Rural conditions
+    isPG = 1;     // HARDCODED: Pasquill-Gifford stability scheme
+    isGFS = 1;    // HARDCODED: GFS meteorological data
 
     // Load terminal output settings
     g_sim.fixedScrollOutput = g_config.getInt("fixed_scroll_output", 1);
 
-    // Load physics model switches
-    g_turb_switch = g_config.getInt("turbulence_model", 0);
-    g_drydep = g_config.getInt("dry_deposition_model", 0);
-    g_wetdep = g_config.getInt("wet_deposition_model", 0);
-    g_raddecay = g_config.getInt("radioactive_decay_model", 1);
+    // Hardcode turbulence model (not implemented in v1.0)
+    g_turb_switch = 0;  // HARDCODED: Turbulence model not implemented
 
-    // Display physics model configuration
-    std::cout << Color::BOLD << "Physics Models" << Color::RESET << std::endl;
-    std::cout << "  TURB=" << g_turb_switch
-              << ", DRYDEP=" << g_drydep
-              << ", WETDEP=" << g_wetdep
-              << ", RADDECAY=" << g_raddecay << std::endl;
+    // Note: Other physics models (dry/wet deposition, radioactive decay)
+    // are loaded from physics.conf in loadPhysicsConfig()
 
     // Clean output directory before simulation
     cleanOutputDirectory();
@@ -1556,182 +1549,8 @@ void LDM::loadSimulationConfig() {
         exit(1);
     }
 
-    // ========== ATMOSPHERIC CONDITIONS ==========
-    // Parse rural_conditions (NO DEFAULT - explicit value required)
-    std::string isRural_str = g_config.getString("rural_conditions", "");
-    if (isRural_str.empty()) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Missing required parameter: rural_conditions" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    The rural_conditions parameter is required for turbulence modeling." << std::endl;
-        std::cerr << "    This affects dispersion patterns in urban vs. rural environments." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    rural_conditions: <0 or 1>" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Urban conditions (buildings reduce turbulence)" << std::endl;
-        std::cerr << "    1 = Rural conditions (open terrain, higher turbulence)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Example:" << Color::RESET << std::endl;
-        std::cerr << "    rural_conditions: 1  # For countryside or open areas" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-    try {
-        isRural = std::stoi(isRural_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse rural_conditions value: '" << isRural_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // Parse use_pasquill_gifford (NO DEFAULT - explicit value required)
-    std::string isPG_str = g_config.getString("use_pasquill_gifford", "");
-    if (isPG_str.empty()) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Missing required parameter: use_pasquill_gifford" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    The use_pasquill_gifford parameter selects stability classification scheme." << std::endl;
-        std::cerr << "    This affects how atmospheric stability is calculated." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    use_pasquill_gifford: <0 or 1>" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Briggs-McElroy-Pooler (more detailed parameterization)" << std::endl;
-        std::cerr << "    1 = Pasquill-Gifford (traditional, widely used)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    use_pasquill_gifford: 1  # Standard choice" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-    try {
-        isPG = std::stoi(isPG_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse use_pasquill_gifford value: '" << isPG_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: rural_conditions =====
-    if (isRural != 0 && isRural != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid rural_conditions: " << isRural << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Urban conditions (buildings reduce turbulence)" << std::endl;
-        std::cerr << "    1 = Rural conditions (open terrain, higher turbulence)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: use_pasquill_gifford =====
-    if (isPG != 0 && isPG != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid use_pasquill_gifford: " << isPG << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Briggs-McElroy-Pooler (more detailed parameterization)" << std::endl;
-        std::cerr << "    1 = Pasquill-Gifford (traditional, widely used)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << " 1 (Pasquill-Gifford)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ========== METEOROLOGICAL DATA SOURCE ==========
-    // Parse use_gfs_data (NO DEFAULT - explicit value required)
-    std::string isGFS_str = g_config.getString("use_gfs_data", "");
-    if (isGFS_str.empty()) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Missing required parameter: use_gfs_data" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    The use_gfs_data parameter selects meteorological data source." << std::endl;
-        std::cerr << "    This determines which weather model drives the simulation." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    use_gfs_data: <0 or 1>" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = LDAPS (Korean regional model, higher resolution)" << std::endl;
-        std::cerr << "    1 = GFS (Global Forecast System, 0.5° resolution)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    use_gfs_data: 1  # GFS for global coverage" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-    try {
-        isGFS = std::stoi(isGFS_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse use_gfs_data value: '" << isGFS_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET
-                  << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: use_gfs_data =====
-    if (isGFS != 0 && isGFS != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid use_gfs_data: " << isGFS << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = LDAPS (Korean regional model, higher resolution)" << std::endl;
-        std::cerr << "    1 = GFS (Global Forecast System, 0.5° resolution)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << " 1 (GFS) for global coverage" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/simulation.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    // Note: Atmospheric conditions and meteorological data are hardcoded in v1.0
+    // isRural=1, isPG=1, isGFS=1 (set in loadLegacyConfig)
 
     // ========== TERMINAL OUTPUT ==========
     // Parse fixed_scroll_output (NO DEFAULT - explicit value required)
@@ -1948,13 +1767,15 @@ void LDM::loadSimulationConfig() {
  * @brief Load physics model configuration from physics.conf
  *
  * @details Parses input/physics.conf to configure physics model switches:
- *          - turbulence_model: Turbulent diffusion (0=off, 1=on)
- *          - dry_deposition_model: Dry deposition (0=off, 1=on)
- *          - wet_deposition_model: Wet deposition (0=off, 1=on)
- *          - radioactive_decay_model: Decay (0=off, 1=on)
+ *          - dry_deposition_model: Dry deposition (On/Off)
+ *          - wet_deposition_model: Wet deposition (On/Off)
+ *          - radioactive_decay_model: Decay (On/Off)
+ *
+ *          Note: turbulence_model is hardcoded to 0 (not implemented in v1.0)
  *
  * @pre input/physics.conf must exist
- * @post Physics switches set: g_turb_switch, g_drydep, g_wetdep, g_raddecay
+ * @post Physics switches set: g_drydep, g_wetdep, g_raddecay
+ * @post g_turb_switch hardcoded to 0
  * @post Configuration summary printed to console
  *
  * @author Juryong Park
@@ -1982,44 +1803,31 @@ void LDM::loadPhysicsConfig() {
     }
 
     // Parse physics model switches (NO DEFAULTS - all must be explicitly provided)
+    // Note: turbulence_model is hardcoded to 0 (not implemented in v1.0)
 
-    // Parse turbulence_model (NO DEFAULT)
-    std::string turb_str = physics_config.getString("turbulence_model", "");
-    if (turb_str.empty()) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Missing required parameter: turbulence_model" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    The turbulence_model parameter controls turbulent diffusion." << std::endl;
-        std::cerr << "    This is crucial for realistic atmospheric dispersion." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    turbulence_model: <0 or 1>" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no turbulent diffusion)" << std::endl;
-        std::cerr << "    1 = Enabled (includes atmospheric turbulence)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    turbulence_model: 1  # Almost always needed" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-    try {
-        g_turb_switch = std::stoi(turb_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse turbulence_model value: '" << turb_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    // Helper lambda to parse On/Off values
+    auto parseOnOff = [](const std::string& value, const std::string& param_name) -> int {
+        if (value == "On" || value == "on" || value == "ON") {
+            return 1;
+        } else if (value == "Off" || value == "off" || value == "OFF") {
+            return 0;
+        } else {
+            std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                      << Color::RESET << "Invalid value for " << param_name << ": '" << value << "'" << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+            std::cerr << "    Value must be 'On' or 'Off' (case-insensitive)." << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
+            std::cerr << "    On  = Enabled" << std::endl;
+            std::cerr << "    Off = Disabled" << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
+            std::cerr << std::endl;
+            exit(1);
+        }
+        return 0;
+    };
 
     // Parse dry_deposition_model (NO DEFAULT)
     std::string drydep_str = physics_config.getString("dry_deposition_model", "");
@@ -2032,32 +1840,20 @@ void LDM::loadPhysicsConfig() {
         std::cerr << "    This is important for particulate matter transport." << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    dry_deposition_model: <0 or 1>" << std::endl;
+        std::cerr << "    dry_deposition_model: <On or Off>" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (particles do not settle)" << std::endl;
-        std::cerr << "    1 = Enabled (gravitational settling and surface deposition)" << std::endl;
+        std::cerr << "    Off = Disabled (particles do not settle)" << std::endl;
+        std::cerr << "    On  = Enabled (gravitational settling and surface deposition)" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    dry_deposition_model: 1  # For particulate matter" << std::endl;
+        std::cerr << "    dry_deposition_model: On  # For particulate matter" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
         std::cerr << std::endl;
         exit(1);
     }
-    try {
-        g_drydep = std::stoi(drydep_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse dry_deposition_model value: '" << drydep_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    g_drydep = parseOnOff(drydep_str, "dry_deposition_model");
 
     // Parse wet_deposition_model (NO DEFAULT)
     std::string wetdep_str = physics_config.getString("wet_deposition_model", "");
@@ -2070,32 +1866,20 @@ void LDM::loadPhysicsConfig() {
         std::cerr << "    This is critical during rain or snow events." << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    wet_deposition_model: <0 or 1>" << std::endl;
+        std::cerr << "    wet_deposition_model: <On or Off>" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no precipitation removal)" << std::endl;
-        std::cerr << "    1 = Enabled (removal by rain and snow)" << std::endl;
+        std::cerr << "    Off = Disabled (no precipitation removal)" << std::endl;
+        std::cerr << "    On  = Enabled (removal by rain and snow)" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    wet_deposition_model: 1  # If precipitation expected" << std::endl;
+        std::cerr << "    wet_deposition_model: On  # If precipitation expected" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
         std::cerr << std::endl;
         exit(1);
     }
-    try {
-        g_wetdep = std::stoi(wetdep_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse wet_deposition_model value: '" << wetdep_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    g_wetdep = parseOnOff(wetdep_str, "wet_deposition_model");
 
     // Parse radioactive_decay_model (NO DEFAULT)
     std::string raddecay_str = physics_config.getString("radioactive_decay_model", "");
@@ -2108,112 +1892,23 @@ void LDM::loadPhysicsConfig() {
         std::cerr << "    This is essential for radionuclide transport simulations." << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Required format:" << Color::RESET << std::endl;
-        std::cerr << "    radioactive_decay_model: <0 or 1>" << std::endl;
+        std::cerr << "    radioactive_decay_model: <On or Off>" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no radioactive decay)" << std::endl;
-        std::cerr << "    1 = Enabled (CRAM decay computation)" << std::endl;
+        std::cerr << "    Off = Disabled (no radioactive decay)" << std::endl;
+        std::cerr << "    On  = Enabled (CRAM decay computation)" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET << std::endl;
-        std::cerr << "    radioactive_decay_model: 1  # Keep ON for radionuclides" << std::endl;
+        std::cerr << "    radioactive_decay_model: On  # Keep ON for radionuclides" << std::endl;
         std::cerr << std::endl;
         std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
         std::cerr << std::endl;
         exit(1);
     }
-    try {
-        g_raddecay = std::stoi(raddecay_str);
-    } catch (const std::exception& e) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Cannot parse radioactive_decay_model value: '" << raddecay_str << "'" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    Value must be either 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    g_raddecay = parseOnOff(raddecay_str, "radioactive_decay_model");
 
-    // ===== VALIDATION: turbulence_model =====
-    if (g_turb_switch != 0 && g_turb_switch != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid turbulence_model: " << g_turb_switch << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no turbulent diffusion)" << std::endl;
-        std::cerr << "    1 = Enabled (includes atmospheric turbulence)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Note:" << Color::RESET
-                  << " Turbulence is crucial for realistic dispersion patterns." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: dry_deposition_model =====
-    if (g_drydep != 0 && g_drydep != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid dry_deposition_model: " << g_drydep << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (particles do not settle)" << std::endl;
-        std::cerr << "    1 = Enabled (gravitational settling and surface deposition)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Note:" << Color::RESET
-                  << " Important for particulate matter and long-range transport." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: wet_deposition_model =====
-    if (g_wetdep != 0 && g_wetdep != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid wet_deposition_model: " << g_wetdep << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no precipitation removal)" << std::endl;
-        std::cerr << "    1 = Enabled (removal by rain and snow)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Note:" << Color::RESET
-                  << " Critical during precipitation events." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
-
-    // ===== VALIDATION: radioactive_decay_model =====
-    if (g_raddecay != 0 && g_raddecay != 1) {
-        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
-                  << Color::RESET << "Invalid radioactive_decay_model: " << g_raddecay << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
-        std::cerr << "    This is a boolean flag - must be 0 or 1." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Valid values:" << Color::RESET << std::endl;
-        std::cerr << "    0 = Disabled (no radioactive decay)" << std::endl;
-        std::cerr << "    1 = Enabled (CRAM decay computation)" << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::GREEN << "Recommended:" << Color::RESET
-                  << " Keep ON (1) for radionuclide transport." << std::endl;
-        std::cerr << std::endl;
-        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " input/physics.conf" << std::endl;
-        std::cerr << std::endl;
-        exit(1);
-    }
+    // Note: Validation is handled by parseOnOff() lambda above
+    // No additional validation needed - values are guaranteed to be 0 or 1
 
     std::cout << Color::GREEN << "done" << Color::RESET << std::endl;
 

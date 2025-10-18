@@ -457,6 +457,10 @@ public:
     bool config_enable_single_mode_vtk;   // User config: enable VTK for single mode
     bool config_enable_ensemble_mode_vtk; // User config: enable VTK for ensemble mode
 
+    // EKI iteration tracking (for progress display)
+    int current_eki_iteration;      // Current EKI iteration number (1-based)
+    int max_eki_iterations;         // Maximum number of EKI iterations
+
     __device__ __host__ struct LDMpart{
 
         float x, y, z;                       // Essential: Position coordinates

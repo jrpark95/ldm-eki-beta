@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
 
     // Load nuclide decay chain configuration
     NuclideConfig* nucConfig = NuclideConfig::getInstance();
-    std::string nuclide_config_file = "./input/nuclides_config_1.txt";
+    std::string nuclide_config_file = "./cram/nuclides_config_single.txt";
 
     if (!nucConfig->loadFromFile(nuclide_config_file)) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET

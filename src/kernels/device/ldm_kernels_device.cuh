@@ -149,7 +149,7 @@ __device__ __forceinline__ float GaussianRand(curandState* states, float mu, flo
  *   - Block size: 256 threads
  *   - Grid size: (num_particles + 255) / 256
  */
-__global__ void init_curand_states(LDM::LDMpart* d_part, float t0, int num_particles);
+__global__ void initCurandStates(LDM::LDMpart* d_part, float t0, int num_particles);
 
 /**
  * @kernel update_particle_flags
@@ -166,7 +166,7 @@ __global__ void init_curand_states(LDM::LDMpart* d_part, float t0, int num_parti
  *   - Block size: 256 threads
  *   - Grid size: (num_particles + 255) / 256
  */
-__global__ void update_particle_flags(LDM::LDMpart* d_part, float activationRatio, int num_particles);
+__global__ void updateParticleFlags(LDM::LDMpart* d_part, float activationRatio, int num_particles);
 
 /**
  * @kernel update_particle_flags_ens
@@ -185,9 +185,9 @@ __global__ void update_particle_flags(LDM::LDMpart* d_part, float activationRati
  *   - Grid size: (total_particles + 255) / 256
  *
  * @note Activates based on particle.timeidx within each ensemble
- * @see update_particle_flags() for single-mode version
+ * @see updateParticleFlags() for single-mode version
  */
-__global__ void update_particle_flags_ens(
+__global__ void updateParticleFlagsEnsemble(
     LDM::LDMpart* d_part, float activationRatio,
     int total_particles, int particles_per_ensemble);
 

@@ -674,6 +674,7 @@ int main(int argc, char** argv) {
             ldm.is_ensemble_mode = true;
             ldm.ensemble_size = num_ensemble;
             ldm.ensemble_num_states = num_timesteps;  // Use observation timesteps (48) not state timesteps (24)
+            ldm.max_eki_iterations = max_iterations;  // Set maximum iterations for progress display
 
             // Select ensemble 7 for VTK output (fixed, not random)
             ldm.selected_ensemble_ids.clear();
@@ -689,6 +690,9 @@ int main(int argc, char** argv) {
             ldm.cleanupEKIObservationSystem();
             ldm.initializeEKIObservationSystem();
         }
+
+        // Update current iteration number for progress display
+        ldm.current_eki_iteration = current_iteration;
 
         // Enable VTK output based on config (only on final iteration if enabled)
         if (ldm.config_enable_ensemble_mode_vtk && current_iteration == max_iterations) {

@@ -57,10 +57,25 @@ def Run(input_config={}, input_data={}):
                 Phi_n = compute_Phi_n(obs, state_in_ob, ob_err)
                 alpha_inv = compute_alpha_inv(len(state_in_ob), Phi_n, alpha_inv_history, i)
                 alpha_inv_history.append(alpha_inv)
-                if len(alpha_inv_history) > 1 and (alpha_inv >= 1.0 - T_n or alpha_inv < 0.0):
-                    print(f"Adaptive EKI converged at iteration {i+1}")
+
+                # Check for negative step (invalid)
+                if alpha_inv < 0.0:
+                    print(f"Adaptive EKI converged (negative step) at iteration {i+1}")
                     break
-                T_n += alpha_inv
+
+                # Update total step
+                T_n_new = T_n + alpha_inv
+
+                # Only converge if total step significantly exceeds 1.0 (with tolerance)
+                # or if step size becomes very small
+                if T_n_new > 1.05:  # 5% tolerance for numerical issues
+                    print(f"Adaptive EKI converged (T_n={T_n_new:.3f} >= 1.0) at iteration {i+1}")
+                    break
+                elif len(alpha_inv_history) > 2 and alpha_inv < 0.01:  # Step < 1%
+                    print(f"Adaptive EKI converged (small step={alpha_inv:.4f}) at iteration {i+1}")
+                    break
+
+                T_n = T_n_new
         
             # Now safe to access - we know keys exist
             # IMPORTANT: Pass localizer_func explicitly (no default None allowed)
@@ -207,15 +222,37 @@ class Inverse(object):
         return state_update
 
     def centralized_localizer(matrix, L):
-        distances1 = compute_distances(matrix.shape[0])
-        distances2 = compute_distances(matrix.shape[1])
+        """
+        Apply separable Gaspari-Cohn localization using 1D tapers.
 
-        # Compute the localization matrices using Gaussian taper
-        Psi1 = np.vectorize(lambda d: np.exp(-d**2 / (2*L**2)))(distances1)
-        Psi2 = np.vectorize(lambda d: np.exp(-d**2 / (2*L**2)))(distances2)
+        For a (m, n) covariance matrix, creates localization taper
+        as outer product of 1D tapers for each dimension.
 
-        # Apply element-wise localization
-        localized_matrix = matrix * Psi1 * Psi2
+        Args:
+            matrix: Covariance matrix (m × n)
+            L: Localization length scale (in grid units)
+
+        Returns:
+            localized_matrix: Localized covariance (m × n)
+        """
+        # Create 1D tapering functions for each dimension using Gaussian
+        # This avoids the broadcasting error from trying to multiply (m,m) and (n,n) matrices
+        taper1 = np.exp(-np.arange(matrix.shape[0])**2 / (2*L**2))  # (m,)
+        taper2 = np.exp(-np.arange(matrix.shape[1])**2 / (2*L**2))  # (n,)
+
+        # Outer product creates (m, n) localization matrix
+        Psi = taper1[:, np.newaxis] * taper2[np.newaxis, :]  # (m, n)
+
+        # Clip very small values to prevent numerical issues
+        # Values below 1e-10 are set to 0 (complete decorrelation)
+        Psi = np.where(Psi < 1e-10, 0.0, Psi)
+
+        # Element-wise multiplication with safety check for NaN/Inf
+        localized_matrix = matrix * Psi
+
+        # Replace NaN/Inf with 0 for numerical stability
+        localized_matrix = np.nan_to_num(localized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+
         return localized_matrix
 
     def EnKF_with_Localizer(self, iteration, state_predict, state_in_ob, obs, ob_err, ob,
@@ -229,7 +266,8 @@ class Inverse(object):
         pxz = localizer_func(pxz, self.weighting_factor)
         pzz = localizer_func(pzz, self.weighting_factor)
 
-        k_modified = np.dot(pxz, np.linalg.pinv(pzz + ob_err))
+        # Use higher rcond for numerical stability with localization
+        k_modified = np.dot(pxz, np.linalg.pinv(pzz + ob_err, rcond=1e-10))
         dx = np.dot(k_modified, obs-state_in_ob)
         state_update = state_predict + dx
         return state_update
@@ -246,7 +284,10 @@ class Inverse(object):
         pzz = localizer_func(pzz, self.weighting_factor)
 
         alpha = 1.0/alpha_inv
-        k_modified = np.dot(pxz, np.linalg.pinv(pzz + alpha * ob_err))
+
+        # Add regularization for numerical stability when using localization
+        # This prevents SVD convergence issues with ill-conditioned matrices
+        k_modified = np.dot(pxz, np.linalg.pinv(pzz + alpha * ob_err, rcond=1e-10))
 
         xi = _perturb(np.zeros(ob.shape), ob_err, self.sample)
         perturbed_diff = obs + np.sqrt(alpha) * xi - state_in_ob

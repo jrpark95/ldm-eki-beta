@@ -74,7 +74,13 @@ def load_config_from_shared_memory():
         'EnKF_MDA_steps': 0.7,
         'REnKF_regularization': 'regularization.py',
         'Adaptive_EKI': shm_data['adaptive_eki'],
-        'Localized_EKI': shm_data['localized_eki'],
+
+        # ⚠️  HARD-CODED TO 'Off' FOR v1.0 DEPLOYMENT
+        # The LOCALIZED option is disabled for this release due to concerns about
+        # physical correctness. This is the only allowed hard-coding exception.
+        # Future releases will re-enable this after additional validation.
+        'Localized_EKI': 'Off',  # Always Off, ignoring shm_data['localized_eki']
+
         'Localization': 'centralized',
         'Localization_weighting_factor': 1.0,
         'Regularization': shm_data['regularization'],

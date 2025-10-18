@@ -52,10 +52,10 @@
  * @note Only used for final iteration or when enable_vtk_output = true
  * @note Typical usage: Output ensemble #7 for visualization
  *
- * @see move_part_by_wind_mpi_ens() for non-dump version
- * @see move_part_by_wind_mpi_dump() for single-mode dump version
+ * @see advectParticlesEnsemble() for non-dump version
+ * @see advectParticlesWithVTK() for single-mode dump version
  */
-__global__ void move_part_by_wind_mpi_ens_dump(
+__global__ void advectParticlesEnsembleWithVTK(
     LDM::LDMpart* d_part, float t0, int rank, float* d_dryDep, float* d_wetDep, int mesh_nx, int mesh_ny,
     FlexUnis* device_meteorological_flex_unis0,
     FlexPres* device_meteorological_flex_pres0,

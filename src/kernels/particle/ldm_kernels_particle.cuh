@@ -63,10 +63,10 @@
  * @warning Skips inactive particles (flag == 0)
  * @warning Particles outside domain are flagged as inactive
  *
- * @see move_part_by_wind_mpi_ens() for ensemble version
- * @see move_part_by_wind_mpi_dump() for VTK output version
+ * @see advectParticlesEnsemble() for ensemble version
+ * @see advectParticlesWithVTK() for VTK output version
  */
-__global__ void move_part_by_wind_mpi(
+__global__ void advectParticles(
     LDM::LDMpart* d_part, float t0, int rank, float* d_dryDep, float* d_wetDep, int mesh_nx, int mesh_ny,
     FlexUnis* device_meteorological_flex_unis0,
     FlexPres* device_meteorological_flex_pres0,

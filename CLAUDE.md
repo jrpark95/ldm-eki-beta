@@ -485,3 +485,85 @@ CUDA 커널 에러를 자동으로 수집하여 시뮬레이션 종료 시 일�
   - 스무딩 조절: `--sigma 3.0` (강함) / `--sigma 1.0` (약함)
 - 출력: `output/results/particle_distribution_{prior|ensemble}.gif`
 - Conda 환경: `ldm-viz` (pyvista, matplotlib, cartopy, scipy, imageio)
+
+### EKI LOCALIZED Option Disabled for Deployment (2025-10-18)
+- **배포 제한**: `EKI_LOCALIZED` 옵션이 v1.0 릴리즈에서 영구 비활성화됨
+- **유일한 하드코딩 예외**: 이것만이 LDM-EKI에서 허용된 하드코딩
+- **이유**: 기술적 테스트는 통과했으나 물리적 타당성 검증 실패
+- **구현 방식**:
+  - `input/eki.conf`: 비활성화 경고 추가, 파라미터는 C++ 호환성을 위해 유지
+  - `src/eki/eki_shm_config.py:82`: Python에서 `'Localized_EKI': 'Off'`로 하드코딩
+  - `LOCALIZED_DISABLED.md`: 비활성화 이유 및 향후 재활성화 방법 문서화
+- **테스트 결과**:
+  - 기술적 테스트: 16/16 조합 성공 (100% 통과율)
+  - 버그 수정: 3개 버그 (shape broadcasting, premature convergence, SVD 실패) 모두 수정
+  - 물리적 검증: 도메인 전문가 리뷰에서 결과의 물리적 타당성 부족 판정
+- **사용자 영향**:
+  - v1.0에서 LOCALIZED 옵션 사용 불가
+  - 대안: 앙상블 크기 증가, 정규화 사용, 적응형 스텝 사용
+- **문서화**:
+  - `docs/testing/ISSUES_FOUND.md` - 발견된 3개 버그 분석
+  - `docs/testing/FIXES_APPLIED.md` - 버그 수정 상세 내역
+  - `docs/testing/TEST_RESULTS_FINAL.md` - 최종 테스트 결과
+  - `LOCALIZED_DISABLED.md` - 비활성화 종합 문서
+
+### Physics Configuration Modernization (2025-10-18)
+- **physics.conf 간소화**:
+  - turbulence_model 제거: 미구현 기능으로 설정 파일에서 완전 삭제
+  - 0/1 → On/Off 변경: 직관적인 On/Off 형식으로 변경
+  - 파라미터: dry_deposition_model, wet_deposition_model, radioactive_decay_model
+- **C++ 파서 개선**:
+  - `parseOnOff()` 람다 함수 추가: 대소문자 구분 없이 On/Off 파싱
+  - turbulence_model 하드코딩: `g_turb_switch = 0` (미구현)
+  - 검증 로직 간소화: parseOnOff()에서 처리, 중복 validation 제거 (~80줄 감소)
+
+### Configuration Hardcoding for v1.0 Release (2025-10-18)
+- **하드코딩된 파라미터**:
+  - `isRural = 1`: Rural 대기 조건 (고정)
+  - `isPG = 1`: Pasquill-Gifford 안정도 체계 (고정)
+  - `isGFS = 1`: GFS 기상 데이터 (고정)
+- **simulation.conf 수정**:
+  - ATMOSPHERIC CONDITIONS 섹션 제거
+  - METEOROLOGICAL DATA SOURCE 섹션 제거
+  - 하드코딩 경고 메시지 추가
+- **C++ 코드 변경**:
+  - `src/init/ldm_init_config.cu`: 초기화 섹션에서 직접 하드코딩
+  - 파싱/검증 코드 완전 제거 (~176줄 감소)
+- **이점**:
+  - 설정 파일 복잡도 감소
+  - 잘못된 값 입력 위험 제거
+  - v1.0 프로덕션 설정 보장
+
+### Development Warning Messages (2025-10-18)
+- **advanced.conf**: 개발 중 경고 추가
+  - 파일 전체가 미완성 상태임을 명시
+  - 파서 미구현, 검증 로직 없음 경고
+- **source.conf GRID_CONFIG**: 개발 중 경고 추가
+  - 그리드 기반 농도장 계산 미구현
+  - v1.0에서는 수용체 기반 관측 사용 권장
+- **목적**: 사용자가 미완성 기능을 수정하지 않도록 명확한 안내
+
+### Receptor Configuration Update (2025-10-18)
+- **receptor.conf 개선**:
+  - 수용체 개수: 5개 → 16개
+  - 배치 형태: 4×4 정사각형 메시
+  - 소스 중심: 129.48°E, 35.71°N
+  - 메시 범위: 129.3-129.6°E, 35.5-35.8°N
+  - 간격: 0.1° (약 11km)
+- **장점**:
+  - 소스 주변 균일 분포
+  - 모든 방향에서 관측 가능
+  - EKI 알고리즘에 균형잡힌 입력 제공
+
+### Progress Bar Output Simplification (2025-10-18)
+- **출력 간소화**:
+  - Iteration 줄 제거: 4줄 → 3줄
+  - 불필요한 공백 정렬 제거
+  - 간결한 형식 유지
+- **최종 형식**:
+  ```
+  Time: 21600.0 sec │ Step: 216/216 [████] 100.0%
+  Meteo: Past=2 Future=2 │ t0=0.000
+  Mode: ENSEMBLE │ Size: 100
+  VTK: Disabled
+  ```

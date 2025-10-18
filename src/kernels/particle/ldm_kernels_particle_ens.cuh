@@ -58,10 +58,10 @@
  *
  * @warning Requires total_particles = num_ensemble * particles_per_ensemble
  *
- * @see move_part_by_wind_mpi() for single-mode version
- * @see move_part_by_wind_mpi_ens_dump() for VTK output version
+ * @see advectParticles() for single-mode version
+ * @see advectParticlesEnsembleWithVTK() for VTK output version
  */
-__global__ void move_part_by_wind_mpi_ens(
+__global__ void advectParticlesEnsemble(
     LDM::LDMpart* d_part, float t0, int rank, float* d_dryDep, float* d_wetDep, int mesh_nx, int mesh_ny,
     FlexUnis* device_meteorological_flex_unis0,
     FlexPres* device_meteorological_flex_pres0,
