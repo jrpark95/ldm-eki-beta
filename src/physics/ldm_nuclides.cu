@@ -14,9 +14,9 @@
  *
  * ## Key Functions
  *
- * - **loadFromFile()**: Parse CSV config and calculate derived properties
- * - **copyToDevice()**: Upload decay constants to GPU memory
- * - **Accessor methods**: Thread-safe property queries
+ * - loadFromFile(): Parse CSV config and calculate derived properties
+ * - copyToDevice(): Upload decay constants to GPU memory
+ * - Accessor methods: Thread-safe property queries
  *
  * ## File Format Handling
  *

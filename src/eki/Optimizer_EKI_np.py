@@ -3,50 +3,7 @@ import numpy as np
 import Model_Connection_np_Ensemble as Model_np
 
 def Run(input_config={}, input_data={}):
-    """
-    Main EKI optimization runner.
-
-    Executes the ensemble Kalman inversion algorithm to estimate emission sources
-    from atmospheric dispersion observations. Supports multiple EKI variants including
-    standard EnKF, adaptive step size, localization, and regularization.
-
-    Args:
-        input_config (dict): Configuration dictionary containing:
-            - 'sample' (int): Number of ensemble members
-            - 'iteration' (int): Maximum number of iterations per time step
-            - 'time' (int): Number of time steps
-            - 'Adaptive_EKI' (str): 'On'/'Off' for adaptive step size
-            - 'Localized_EKI' (str): 'On'/'Off' for covariance localization
-            - 'Regularization' (str): 'On'/'Off' for regularized EnKF
-            - 'perturb_option' (str): Observation perturbation mode
-        input_data (dict): Data dictionary containing:
-            - observations: Measured receptor data
-            - prior states: Initial ensemble guess
-            - observation errors: Measurement uncertainty
-
-    Returns:
-        tuple: 14-element tuple containing:
-            - state_update_list: Final ensemble states for each time step
-            - state_update_iteration_list: States at each iteration
-            - info_list: Algorithm information
-            - misfit_list: Data misfit history
-            - discrepancy_bool_list: Discrepancy convergence flags
-            - residual_bool_list: Residual convergence flags
-            - residual_list: Relative residual history
-            - noise_list: Noise level estimates
-            - ensXiter_list: Ensemble-iteration product at convergence
-            - diff_list: Difference from true state (if available)
-            - misfits_list: State misfit history
-            - discrepancy_bools_list: Discrepancy flags per state
-            - residual_bools_list: Residual flags per state
-            - residuals_list: Residual values per state
-
-    Notes:
-        - Convergence is checked via discrepancy principle and residual tolerance
-        - Adaptive EKI uses automatic step size control based on data misfit
-        - Localized EKI applies spatial decorrelation to covariance matrices
-        - All iteration data is saved to logs/eki_iterations/ for visualization
-    """
+    
     np.random.seed(0)
     inverse = Inverse(input_config)
     model = Model_np.Model(input_config, input_data)
@@ -243,34 +200,6 @@ class Inverse(object):
         return state_update
 
     def EnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
-        """
-        Standard Ensemble Kalman Filter update.
-
-        Implements the classic EnKF algorithm for state estimation using ensemble
-        covariance matrices. Computes the Kalman gain from ensemble statistics and
-        applies analysis update to all ensemble members.
-
-        Args:
-            iteration (int): Current iteration number (unused in standard EnKF)
-            state_predict (ndarray): Forecast ensemble states (num_states x num_ensemble)
-            state_in_ob (ndarray): Predicted observations (num_obs x num_ensemble)
-            obs (ndarray): Perturbed observations (num_obs x num_ensemble)
-            ob_err (ndarray): Observation error covariance matrix (num_obs x num_obs)
-            ob (ndarray): Original observations (num_obs,) - unused in standard EnKF
-
-        Returns:
-            ndarray: Updated ensemble states (num_states x num_ensemble) after Kalman update
-
-        Reference:
-            Evensen, G. (2003). "The Ensemble Kalman Filter: theoretical formulation
-            and practical implementation." Ocean Dynamics, 53(4), 343-367.
-            DOI: 10.1007/s10236-003-0036-9
-
-        Notes:
-            - Uses pseudoinverse for numerical stability with ill-conditioned matrices
-            - No inflation or localization applied (see variants for these features)
-            - Anomaly-based formulation reduces computational cost
-        """
         x = _ave_substracted(state_predict)
         hx = _ave_substracted(state_in_ob)
         pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
@@ -281,37 +210,6 @@ class Inverse(object):
         return state_update
 
     def Adaptive_EnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob, alpha_inv):
-        """
-        Adaptive Ensemble Kalman Filter with automatic step size control.
-
-        Adjusts the update step size based on data misfit to prevent overshooting
-        and ensure convergence. Uses inflated observation error covariance scaled
-        by adaptive parameter alpha to control the update magnitude.
-
-        Args:
-            iteration (int): Current iteration number (unused in this implementation)
-            state_predict (ndarray): Forecast ensemble states (num_states x num_ensemble)
-            state_in_ob (ndarray): Predicted observations (num_obs x num_ensemble)
-            obs (ndarray): Perturbed observations (num_obs x num_ensemble)
-            ob_err (ndarray): Observation error covariance matrix (num_obs x num_obs)
-            ob (ndarray): Original observations (num_obs,) for perturbation
-            alpha_inv (float): Inverse step size parameter (1/alpha), computed from misfit
-
-        Returns:
-            ndarray: Updated ensemble states (num_states x num_ensemble) with adaptive damping
-
-        Reference:
-            Iglesias, M. A., Law, K. J. H., & Stuart, A. M. (2013). "Ensemble Kalman
-            methods for inverse problems." Inverse Problems, 29(4), 045001.
-            DOI: 10.1088/0266-5611/29/4/045001
-
-        Notes:
-            - alpha = 1/alpha_inv controls step size: larger alpha = smaller steps
-            - Observation error is inflated by alpha to slow convergence
-            - Additional perturbation xi ensures ensemble consistency
-            - Step size is automatically computed in Run() based on data misfit norm
-            - Converges when cumulative steps exceed 1.0 or step size becomes negligible
-        """
         x = _ave_substracted(state_predict)
         hx = _ave_substracted(state_in_ob)
         pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
@@ -325,35 +223,13 @@ class Inverse(object):
         return state_update
 
     def centralized_localizer(matrix, L):
-        """
-        Apply separable Gaspari-Cohn localization using 1D tapers.
-
-        For a (m, n) covariance matrix, creates localization taper
-        as outer product of 1D tapers for each dimension.
-
-        Args:
-            matrix: Covariance matrix (m × n)
-            L: Localization length scale (in grid units)
-
-        Returns:
-            localized_matrix: Localized covariance (m × n)
-        """
-        # Create 1D tapering functions for each dimension using Gaussian
-        # This avoids the broadcasting error from trying to multiply (m,m) and (n,n) matrices
         taper1 = np.exp(-np.arange(matrix.shape[0])**2 / (2*L**2))  # (m,)
         taper2 = np.exp(-np.arange(matrix.shape[1])**2 / (2*L**2))  # (n,)
 
-        # Outer product creates (m, n) localization matrix
         Psi = taper1[:, np.newaxis] * taper2[np.newaxis, :]  # (m, n)
-
-        # Clip very small values to prevent numerical issues
-        # Values below 1e-10 are set to 0 (complete decorrelation)
         Psi = np.where(Psi < 1e-10, 0.0, Psi)
 
-        # Element-wise multiplication with safety check for NaN/Inf
         localized_matrix = matrix * Psi
-
-        # Replace NaN/Inf with 0 for numerical stability
         localized_matrix = np.nan_to_num(localized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
 
         return localized_matrix
@@ -400,25 +276,6 @@ class Inverse(object):
         return state_update
 
     def EnRML(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
-        """
-        Ensemble Randomized Maximum Likelihood method.
-
-        Uses Gauss-Newton approximation for iterative ensemble updates.
-
-        Args:
-            iteration (int): Current iteration number
-            state_predict (ndarray): Current ensemble states (num_states × num_ensemble)
-            state_in_ob (ndarray): Forward model predictions (num_obs × num_ensemble)
-            obs (ndarray): Observed data with perturbations (num_obs × num_ensemble)
-            ob_err (ndarray): Observation error covariance matrix (num_obs × num_obs)
-            ob (ndarray): Original observed data vector (num_obs,)
-
-        Returns:
-            ndarray: Updated ensemble states (num_states × num_ensemble)
-
-        Reference:
-            Chen & Oliver (2012), Computational Geosciences, DOI: 10.1007/s10596-011-9275-5
-        """
         if iteration == 0:
             self.state0 = state_predict
         x0 = _ave_substracted(self.state0)
@@ -435,25 +292,6 @@ class Inverse(object):
         return state_update
 
     def EnKF_MDA(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
-        """
-        Ensemble Kalman Filter with Multiple Data Assimilation.
-
-        Inflates observation errors to enable multiple assimilation cycles.
-
-        Args:
-            iteration (int): Current iteration number
-            state_predict (ndarray): Current ensemble states (num_states × num_ensemble)
-            state_in_ob (ndarray): Forward model predictions (num_obs × num_ensemble)
-            obs (ndarray): Observed data with perturbations (num_obs × num_ensemble)
-            ob_err (ndarray): Observation error covariance matrix (num_obs × num_obs)
-            ob (ndarray): Original observed data vector (num_obs,)
-
-        Returns:
-            ndarray: Updated ensemble states (num_states × num_ensemble)
-
-        Reference:
-            Emerick & Reynolds (2013), Computational Geosciences, DOI: 10.1007/s10596-012-9333-9
-        """
         x = _ave_substracted(state_predict)
         hx = _ave_substracted(state_in_ob)
         pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
@@ -467,28 +305,6 @@ class Inverse(object):
         return state_update
 
     def REnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
-        """
-        Regularized Ensemble Kalman Filter with non-negativity constraints.
-
-        Adds penalty function to enforce state bounds during update.
-
-        Args:
-            iteration (int): Current iteration number
-            state_predict (ndarray): Current ensemble states (num_states × num_ensemble)
-            state_in_ob (ndarray): Forward model predictions (num_obs × num_ensemble)
-            obs (ndarray): Observed data with perturbations (num_obs × num_ensemble)
-            ob_err (ndarray): Observation error covariance matrix (num_obs × num_obs)
-            ob (ndarray): Original observed data vector (num_obs,)
-
-        Returns:
-            ndarray: Updated ensemble states satisfying constraints (num_states × num_ensemble)
-
-        Note:
-            Uses tanh-based penalty function for smooth constraint handling.
-            Lower bound typically 0.0 (non-negative emissions).
-            Upper bound set to 1.0e+15 to prevent numerical overflow.
-            Regularization strength controlled by self.lambda_value.
-        """
         def tanh_penalty(x):
             return np.tanh(x)
 
@@ -537,35 +353,6 @@ class Inverse(object):
 
 
 def _perturb(ave, cov, samp, perturb=1e-30):
-    """
-    Perturb observations using Cholesky decomposition of covariance.
-
-    Generates ensemble of perturbed observations by adding correlated Gaussian
-    noise. The noise structure is determined by the Cholesky factorization of
-    the observation error covariance matrix.
-
-    Args:
-        ave (ndarray): Mean observation vector (num_obs,)
-        cov (ndarray): Observation error covariance matrix (num_obs x num_obs)
-        samp (int): Number of ensemble members (perturbation samples)
-        perturb (float, optional): Regularization term added to diagonal for
-                                    numerical stability. Default: 1e-30
-
-    Returns:
-        ndarray: Perturbed observations (num_obs x num_ensemble) where each column
-                 is ave + L * z, with L from Cholesky decomposition cov = L * L^T
-                 and z ~ N(0, I)
-
-    Notes:
-        - Uses Cholesky decomposition for efficiency (O(n^3) vs O(n^6) for eigen)
-        - Small regularization prevents Cholesky failure on singular matrices
-        - Perturbation preserves correlation structure defined by cov
-        - Essential for ensemble consistency in stochastic EnKF variants
-
-    Raises:
-        numpy.linalg.LinAlgError: If covariance matrix is not positive definite
-                                   even after regularization
-    """
     dim = len(ave)
     cov += np.eye(dim) * perturb
     chol_decomp = np.linalg.cholesky(cov)
@@ -576,37 +363,6 @@ def _perturb(ave, cov, samp, perturb=1e-30):
 
 
 def _ave_substracted(m):
-    """
-    Compute ensemble anomalies (deviation from mean).
-
-    Subtracts the ensemble mean from each ensemble member to create anomaly
-    matrix. This is a fundamental operation in ensemble-based data assimilation
-    for computing covariance from samples.
-
-    Args:
-        m (ndarray): Ensemble matrix (num_states x num_ensemble) where each column
-                     is an ensemble member
-
-    Returns:
-        ndarray: Anomaly matrix (num_states x num_ensemble) with zero ensemble mean.
-                 Each column is the deviation of the corresponding member from the
-                 ensemble mean: m[:, i] - mean(m, axis=1)
-
-    Mathematical Properties:
-        - Mean of returned matrix is zero: mean(result, axis=1) = 0
-        - Preserves ensemble spread: std(result) = std(m)
-        - Sample covariance: C = (1/(N-1)) * result @ result.T
-
-    Notes:
-        - Used in all EnKF variants to compute ensemble covariances
-        - Reduces computational cost by working with anomalies
-        - Broadcasting is used for efficient mean subtraction
-
-    Example:
-        >>> ensemble = np.array([[1, 2, 3], [4, 5, 6]])  # 2 states, 3 members
-        >>> anomalies = _ave_substracted(ensemble)
-        >>> np.mean(anomalies, axis=1)  # Should be [0, 0]
-    """
     samp = m.shape[1]
     ave = np.array([np.mean(m, 1)])
     ave = np.tile(ave.T, (1, samp))
@@ -615,28 +371,6 @@ def _ave_substracted(m):
 
 
 def _convergence(misfit_list, ob_err, noise_factor=1.0, min_residual=1e-6):
-    """
-    Check convergence using discrepancy principle.
-
-    Compares residual norm to expected noise level and monitors
-    iteration-to-iteration changes in misfit.
-
-    Args:
-        misfit_list (list): History of misfit values across iterations
-        ob_err (ndarray or float): Observation error covariance matrix or scalar
-        noise_factor (float): Noise amplification factor (default: 1.0)
-        min_residual (float): Minimum residual threshold (default: 1e-6)
-
-    Returns:
-        tuple: (discrepancy_bool, residual_bool, residual, noise)
-            - discrepancy_bool (bool): True if misfit ≤ noise_factor × sqrt(trace(ob_err))
-            - residual_bool (bool): True if relative change < min_residual
-            - residual (float): Relative change in misfit from previous iteration
-            - noise (float): Expected noise level (noise_factor × noise_level)
-
-    Reference:
-        Engl et al. (1996), Regularization of Inverse Problems
-    """
     # Discrepancy principle
     if np.any(ob_err) == True:
         noise_level = np.sqrt(np.trace(ob_err))
@@ -658,29 +392,6 @@ def _convergence(misfit_list, ob_err, noise_factor=1.0, min_residual=1e-6):
 
 
 def sec_fisher(cov, N_ens):
-    """
-    Compute second-order ensemble covariance with Fisher z-transformation.
-
-    Applies variance stabilization for correlation estimates to reduce
-    spurious correlations in ensemble methods.
-
-    Args:
-        cov (ndarray): Covariance matrix to process (can be square or rectangular)
-        N_ens (int): Ensemble size (number of ensemble members)
-
-    Returns:
-        ndarray: Covariance matrix with Fisher transformation applied
-            - For square matrices: Returns V @ R_sec @ V
-            - For rectangular matrices: Returns scaled R_sec
-
-    Note:
-        Fisher z-transform: z = arctanh(r) for correlation r
-        Standard error: σ_s = 1/sqrt(N_ens - 3)
-        Applies alpha-weighting based on signal-to-noise ratio Q = r/σ_r
-
-        For square matrices, normalizes by V = diag(sqrt(diag(cov)))
-        For rectangular matrices, uses row and column scaling factors
-    """
     rows, cols = cov.shape
 
     # If the matrix is square, process normally

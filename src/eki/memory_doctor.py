@@ -174,7 +174,7 @@ class MemoryDoctor:
 
                 f.write("\n\n=== END OF DATA ===\n")
 
-            print(f"[MEMORY_DOCTOR] 📥 Iteration {iteration}: Python received {data_type} ← C++")
+            print(f"[MEMORY_DOCTOR] Iteration {iteration}: Python received {data_type} ← C++")
 
         except Exception as e:
             print(f"[MEMORY_DOCTOR] Error logging received data: {e}")

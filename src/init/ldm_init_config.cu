@@ -2168,8 +2168,8 @@ void LDM::loadSourceConfig() {
  * @details Parses nuclide properties with backward compatibility for legacy formats.
  *          Tries files in order:
  *          1. input/nuclides.conf (new format)
- *          2. input/nuclides_config_1.txt (legacy single nuclide)
- *          3. input/nuclides_config_60.txt (legacy 60-nuclide chain)
+ *          2. cram/nuclides_config_single.txt (legacy single nuclide)
+ *          3. cram/nuclides_config_60.txt (legacy 60-nuclide chain)
  *
  *          New format (space-separated):
  *            NUCLIDE_NAME DECAY_CONSTANT(s^-1) DEPOSITION_VELOCITY(m/s)
@@ -2199,15 +2199,15 @@ void LDM::loadNuclidesConfig() {
     filename = "input/nuclides.conf";
     nuclideFile = fopen(filename.c_str(), "r");
 
-    // Fall back to legacy format (nuclides_config_1.txt)
+    // Fall back to legacy format (nuclides_config_single.txt)
     if (!nuclideFile) {
-        filename = "input/nuclides_config_1.txt";
+        filename = "cram/nuclides_config_single.txt";
         nuclideFile = fopen(filename.c_str(), "r");
     }
 
     // Fall back to 60-nuclide chain if available
     if (!nuclideFile) {
-        filename = "input/nuclides_config_60.txt";
+        filename = "cram/nuclides_config_60.txt";
         nuclideFile = fopen(filename.c_str(), "r");
     }
 
@@ -2215,8 +2215,8 @@ void LDM::loadNuclidesConfig() {
         std::cerr << std::endl << Color::RED << "[ERROR] " << Color::RESET
                   << "Cannot open nuclide configuration file" << std::endl;
         std::cerr << "  Tried: input/nuclides.conf" << std::endl;
-        std::cerr << "         input/nuclides_config_1.txt" << std::endl;
-        std::cerr << "         input/nuclides_config_60.txt" << std::endl;
+        std::cerr << "         cram/nuclides_config_single.txt" << std::endl;
+        std::cerr << "         cram/nuclides_config_60.txt" << std::endl;
         exit(1);
     }
 

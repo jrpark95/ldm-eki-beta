@@ -1,0 +1,1255 @@
+################################################################################
+#
+#  LDM-EKI 알고리즘 검증 보고서 (Part 1)
+#  앙상블 칼만 역산 이론 및 구현 상세
+#
+#  버전: v1.0
+#  작성일: 2025-10-18
+#  분량: 800줄 (Part 1/3)
+#
+################################################################################
+
+목차:
+  Part 1 (본 문서):
+    1. 개요 및 배경 (200줄)
+    2. EKI 알고리즘 구현 상세 (600줄)
+
+  Part 2 (별도 문서):
+    3. LOCALIZED 옵션 검증
+    4. 16가지 조합 테스트
+
+  Part 3 (별도 문서):
+    5. 수렴 특성 분석
+    6. 파라미터 튜닝 가이드
+    7. 검증 결과 요약
+
+################################################################################
+#
+#  1. 개요 및 배경
+#
+################################################################################
+
+1.1 앙상블 칼만 역산(Ensemble Kalman Inversion)의 이론적 배경
+────────────────────────────────────────────────────────────────
+
+1.1.1 역문제(Inverse Problem)의 정의
+
+방사능 소스 추정 문제는 다음과 같은 역문제로 정식화됩니다:
+
+  **순방향 문제:**
+    y = G(x) + ε
+
+  여기서:
+    - x ∈ ℝⁿ : 상태 벡터 (방출량 시계열)
+    - y ∈ ℝᵐ : 관측 벡터 (수용체 선량률)
+    - G : ℝⁿ → ℝᵐ : 순방향 모델 (대기확산 시뮬레이션)
+    - ε ~ N(0, R) : 관측 오차
+
+  **역문제:**
+    x를 찾아라, such that ||y - G(x)||² is minimized
+
+1.1.2 역문제의 난해성(Ill-posedness)
+
+Hadamard의 적정성(Well-posedness) 조건:
+  1. 해의 존재성 (Existence)
+  2. 해의 유일성 (Uniqueness)
+  3. 해의 안정성 (Stability: 입력 변화에 대한 연속성)
+
+대기확산 역산 문제는 다음 이유로 ill-posed:
+
+  - **비유일성(Non-uniqueness):**
+    동일한 관측값을 생성하는 여러 방출 시나리오 존재
+    예: 짧은 시간 고농도 방출 vs 긴 시간 저농도 방출
+
+  - **불안정성(Instability):**
+    관측 노이즈가 추정값에 큰 변동 유발
+    고주파 성분이 증폭되어 비물리적 진동 발생
+
+  - **과소결정성(Under-determination):**
+    m < n (관측수 < 상태 변수 수)인 경우 다수의 해 존재
+    예: 216시간 × 16수용체 = 3456 관측 vs 24시간 × 3소스 = 72 상태
+
+1.1.3 Bayesian 역산 프레임워크
+
+EKI는 Bayesian 관점에서 역문제를 확률적으로 해결:
+
+  **사전 확률 분포(Prior):**
+    p(x) ~ N(x_b, B)
+
+  여기서:
+    - x_b : 배경 상태 (초기 추정)
+    - B : 배경 오차 공분산 행렬
+
+  **우도 함수(Likelihood):**
+    p(y|x) ~ N(G(x), R)
+
+  여기서:
+    - R : 관측 오차 공분산 행렬
+
+  **사후 확률 분포(Posterior):**
+    p(x|y) ∝ p(y|x) × p(x)
+
+  목표: 사후 분포를 최대화하는 x 추정 (MAP: Maximum A Posteriori)
+
+1.1.4 변분 접근법 vs 앙상블 접근법
+
+**변분법(Variational Methods):**
+  - 목적 함수 J(x) = ||y - G(x)||²_R + ||x - x_b||²_B 최소화
+  - 접선 선형 모델(Tangent Linear Model) 필요
+  - 계산 비용 낮지만 미분 정보 필요
+
+**앙상블법(Ensemble Methods):**
+  - 앙상블 멤버들의 공분산으로 Kalman 이득 근사
+  - 미분 불필요 (Derivative-free)
+  - 병렬화 용이하지만 앙상블 크기에 선형 비례하는 비용
+
+**LDM-EKI가 앙상블법을 선택한 이유:**
+  1. CUDA 커널의 접선 선형 모델 구현 불필요
+  2. 앙상블 시뮬레이션의 자연스러운 병렬화 (GPU 활용)
+  3. 불확실성 정량화 용이 (앙상블 스프레드)
+  4. 비선형성이 강한 난류 확산 문제에 유리
+
+
+1.2 LDM-EKI에서의 적용
+──────────────────────────────────────────────────────────────
+
+1.2.1 상태 벡터 정의
+
+LDM-EKI의 상태 벡터는 **시간에 따른 방출량(emission rate)**:
+
+  x = [Q₁, Q₂, ..., Q_T]ᵀ ∈ ℝᵀ
+
+  여기서:
+    - Q_t : t번째 시간 구간의 방출량 [Bq]
+    - T : 시간 구간 개수 (예: 6시간 / 15분 = 24)
+
+**v1.0 설정 예시:**
+  - 시뮬레이션 시간: 6시간 (21600초)
+  - 시간 간격(dt): 100초
+  - 역산 시간 간격: 15분 (900초)
+  - 상태 벡터 차원: T = 6×60/15 = 24
+
+따라서:
+  x ∈ ℝ²⁴ (단일 소스)
+  x ∈ ℝ⁷² (3개 소스)
+
+1.2.2 관측 벡터 정의
+
+LDM-EKI의 관측 벡터는 **수용체에서 측정된 선량률(dose rate)**:
+
+  y = [D₁,₁, D₁,₂, ..., D₁,ₙᵣ, D₂,₁, ..., D_ₙₜ,ₙᵣ]ᵀ ∈ ℝⁿᵗ×ⁿʳ
+
+  여기서:
+    - D_t,r : t시간, r번째 수용체의 선량률 [Sv/s]
+    - nt : 관측 시간 개수 (예: 216)
+    - nr : 수용체 개수 (예: 16)
+
+**v1.0 설정 예시:**
+  - 시뮬레이션 시간: 21600초
+  - 관측 간격: 100초
+  - 관측 시간 개수: 216
+  - 수용체 개수: 16 (4×4 정사각형 메시)
+
+따라서:
+  y ∈ ℝ³⁴⁵⁶ (216 × 16)
+
+**차원 불일치 문제:**
+  - 상태 차원: 24
+  - 관측 차원: 3456
+  - 비율: m/n = 3456/24 = 144
+
+이는 **과결정 시스템(Over-determined system)**으로,
+앙상블법에 유리한 조건 (충분한 정보).
+
+1.2.3 순방향 연산자 G
+
+순방향 연산자 G는 LDM의 CUDA 입자 확산 시뮬레이션:
+
+  G: x → y
+
+  구현 경로:
+    1. Python → C++ 공유 메모리 (/dev/shm/ldm_eki_ensemble_*)
+    2. C++가 앙상블 입자 초기화 (LDM::initializeParticlesEKI_AllEnsembles)
+    3. GPU 커널 실행 (updateParticles_kernel_EKI_ensemble)
+    4. 수용체 관측 수집 (collectReceptorObservations_kernel)
+    5. C++ → Python 공유 메모리 (/dev/shm/ldm_eki_ensemble_obs_*)
+
+**G의 특성:**
+  - **비선형:** 난류 확산, 침적, 붕괴 등 비선형 프로세스
+  - **비미분 가능:** CUDA 커널의 자동 미분 불가능
+  - **확률적:** 입자 추적의 무작위성 (난수 기반)
+  - **계산 비용:** O(N_p × N_t) where N_p ~ 10⁶ particles
+
+따라서 접선 선형 모델(TLM) 불가 → **앙상블법 필수**
+
+1.2.4 관측 오차 공분산 R
+
+관측 오차는 다음 요소들의 합:
+  1. 측정 오차 (계측기 불확실성)
+  2. 대표성 오차 (점 관측 vs 격자 평균)
+  3. 모델 오차 (난류 모수화, 침적 등)
+
+**v1.0 구현:**
+
+  R = (σ × y)² × I
+
+  여기서:
+    - σ : 상대 오차 (예: 0.1 = 10%)
+    - I : 단위 행렬 (관측간 독립 가정)
+
+이는 **대각 공분산(Diagonal covariance)** 가정으로:
+  - 장점: 메모리 효율 O(m) vs O(m²)
+  - 단점: 시공간 상관관계 무시
+
+**input/eki.conf 설정:**
+  EKI_NOISE_LEVEL: 0.1  # 10% relative error
+
+
+1.3 방사능 소스 역추정 문제의 특징
+──────────────────────────────────────────────────────────────
+
+1.3.1 시간적 특성
+
+**인과성(Causality):**
+  - 방출 후 시간이 지나야 하류 수용체 도달
+  - 초기 방출 추정이 후기보다 어려움 (정보 부족)
+  - 늦은 시각 방출은 관측 기회 적음
+
+**시간 해상도 트레이드오프:**
+  - 고해상도 (예: 5분): 자유도 높음, ill-posedness 심화
+  - 저해상도 (예: 1시간): 자유도 낮음, 시간 구조 소실
+
+**v1.0 선택:**
+  15분 간격 = 중간 해상도 (6시간 → 24 timesteps)
+
+1.3.2 공간적 특성
+
+**풍하(Downwind) 편향:**
+  - 풍상 수용체는 신호 미약
+  - 풍하 수용체에 정보 집중
+  - 가짜 상관관계(spurious correlation) 발생 가능
+
+**수용체 배치 전략:**
+  - v1.0: 4×4 정사각형 메시 (소스 중심)
+  - 범위: 129.3-129.6°E, 35.5-35.8°N
+  - 간격: 0.1° (약 11km)
+  - 목적: 모든 방향에서 균일한 관측
+
+1.3.3 물리적 제약
+
+**비음수 제약(Non-negativity):**
+  - 물리적 의미: 방출량은 0 이상
+  - 수학적 문제: Gaussian prior는 음수 허용
+  - 해결법: REnKF의 tanh penalty function
+
+**질량 보존(Mass conservation):**
+  - 총 방출량 = 수용체 관측 적분 + 대기 잔류 + 침적
+  - EKI가 과도한 방출 추정하는 경향 (초기 반복)
+  - 정규화로 완화 가능
+
+**시간 연속성(Temporal continuity):**
+  - 실제 방출은 부드러운 시간 변화
+  - EKI는 고주파 진동 생성 경향 (ill-posedness)
+  - 정규화 또는 prior 설계로 억제
+
+
+1.4 주요 도전 과제
+──────────────────────────────────────────────────────────────
+
+1.4.1 앙상블 크기 vs 계산 비용
+
+**문제:**
+  - 앙상블 크기 N_e ↑ → 공분산 추정 정확도 ↑
+  - 하지만 계산 비용 O(N_e) 선형 증가
+  - GPU 메모리 제약 (입자 × 앙상블)
+
+**규칙(Rule of thumb):**
+  N_e ≥ 2 × n (상태 차원)
+
+**v1.0 선택:**
+  - 상태 차원 n = 24
+  - 앙상블 크기 N_e = 100
+  - 비율: 100/24 ≈ 4.2 (충분)
+
+**성능:**
+  - 단일 앙상블 시뮬레이션: ~5초
+  - 100 앙상블 × 10 반복 = 1000 시뮬레이션
+  - 총 시간: ~5000초 ≈ 83분 (이론값)
+  - 실제 시간: ~10-15분 (병렬화 + 최적화)
+
+1.4.2 비선형성 처리
+
+**문제:**
+  - EnKF는 선형 가정 (Kalman 이득의 선형 근사)
+  - 대기 확산은 비선형 (난류, 침적, 붕괴)
+  - 비선형성 강할수록 EnKF 성능 저하
+
+**해결 전략:**
+
+  1. **Adaptive step size:**
+     - α_inv ∈ (0, 1] 로 Kalman 이득 감쇠
+     - 비선형 영역에서 작은 스텝
+     - 선형 영역에서 큰 스텝
+
+  2. **반복 최적화:**
+     - 단일 업데이트 대신 여러 반복
+     - 각 반복마다 선형화점 갱신
+     - 수렴까지 계속
+
+  3. **Multiple Data Assimilation (MDA):**
+     - 관측을 N_a 번 반복 동화
+     - 관측 오차를 N_a 배 증폭
+     - 비선형성 완화
+
+**v1.0 전략:**
+  - Adaptive_EnKF 활용 (EKI_ADAPTIVE: On)
+  - 반복 횟수 3-10회
+  - MDA는 선택사항 (기본 Off)
+
+1.4.3 가짜 상관관계(Spurious Correlation)
+
+**원인:**
+  - 제한된 앙상블 크기 (N_e < ∞)
+  - 샘플 공분산의 잡음
+  - 원거리 변수 간 비물리적 상관
+
+**수학적 표현:**
+  샘플 공분산:
+    P̂ = (1/(N_e-1)) Σ (x_i - x̄)(x_i - x̄)ᵀ
+
+  진짜 공분산 P와의 오차:
+    ||P̂ - P||_F = O(1/√N_e)
+
+**영향:**
+  - 멀리 떨어진 수용체가 부적절한 영향
+  - 비물리적인 방출 패턴 생성
+  - 수렴 저하
+
+**전통적 해결책: Localization**
+  - Gaspari-Cohn 함수로 공분산 국소화
+  - 거리 d > L_c 이면 상관관계 0으로 설정
+  - 하지만 v1.0에서는 **비활성화** (물리적 타당성 문제)
+
+**v1.0 대안:**
+  - 앙상블 크기 증가 (50 → 100)
+  - Regularization 사용 (EKI_REGULARIZATION: On)
+  - 더 나은 prior 설계
+
+1.4.4 수렴 판정
+
+**문제:**
+  - 언제 반복을 멈출 것인가?
+  - 조기 종료 → 정확도 손실
+  - 과도한 반복 → 과적합 + 계산 낭비
+
+**수렴 기준:**
+
+  1. **Discrepancy principle:**
+     ||y - G(x)||² ≤ m × σ²
+
+     즉, residual이 예상 노이즈 수준 이하
+
+  2. **Relative residual:**
+     |x_k - x_{k-1}| / |x_0| < ε
+
+     상태 변화가 충분히 작음 (예: ε = 0.01)
+
+  3. **Adaptive convergence (T_n):**
+     Σ α_inv ≥ 1.0
+
+     누적 스텝 크기가 1 초과 시 수렴
+
+**v1.0 구현:**
+  - Discrepancy + Residual 동시 체크
+  - Adaptive mode에서는 T_n ≥ 1.05 (5% tolerance)
+  - 최대 반복 횟수 제한 (EKI_ITERATION)
+
+
+################################################################################
+#
+#  2. EKI 알고리즘 구현 상세
+#
+################################################################################
+
+2.1 Standard EnKF (Ensemble Kalman Filter)
+──────────────────────────────────────────────────────────────
+
+2.1.1 수학적 공식
+
+**Forecast step:**
+  x_i^f = M(x_i^a)  for i = 1, ..., N_e
+
+  여기서:
+    - x_i^a : i번째 앙상블의 분석(analysis) 상태
+    - M : 예측 모델 (LDM-EKI에서는 항등 변환, 시간 예측 없음)
+    - x_i^f : i번째 앙상블의 예측(forecast) 상태
+
+**Observation operator:**
+  y_i^f = G(x_i^f) + ε_i  for i = 1, ..., N_e
+
+  여기서:
+    - G : 순방향 모델 (LDM CUDA 시뮬레이션)
+    - ε_i ~ N(0, R) : 관측 섭동
+
+**Anomaly computation:**
+  X' = [x_1^f - x̄^f, ..., x_{N_e}^f - x̄^f] ∈ ℝⁿˣᴺᵉ
+  Y' = [y_1^f - ȳ^f, ..., y_{N_e}^f - ȳ^f] ∈ ℝᵐˣᴺᵉ
+
+  여기서:
+    - x̄^f = (1/N_e) Σ x_i^f : 앙상블 평균
+    - ȳ^f = (1/N_e) Σ y_i^f : 관측 평균
+
+**Covariance estimation:**
+  P^f = (1/(N_e-1)) X' X'ᵀ ∈ ℝⁿˣⁿ  (forecast error covariance)
+  P_xy = (1/(N_e-1)) X' Y'ᵀ ∈ ℝⁿˣᵐ  (cross-covariance)
+  P_yy = (1/(N_e-1)) Y' Y'ᵀ ∈ ℝᵐˣᵐ  (observation covariance)
+
+**Kalman gain:**
+  K = P_xy (P_yy + R)⁻¹ ∈ ℝⁿˣᵐ
+
+**Analysis update:**
+  x_i^a = x_i^f + K(y_i - y_i^f)  for i = 1, ..., N_e
+
+  여기서:
+    - y_i : 섭동된 관측 (y + ε_i)
+    - y_i^f = G(x_i^f) : 예측 관측
+
+**통계적 의미:**
+  - K는 정보의 가중 평균
+  - P_xy가 크면 → 상태-관측 상관 강함 → K 큼 → 관측 신뢰
+  - R이 크면 → 관측 불확실 → K 작음 → prior 신뢰
+
+
+2.1.2 LDM-EKI 구현
+
+파일: src/eki/Optimizer_EKI_np.py, lines 245-281
+
+```python
+def EnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
+    """
+    Standard Ensemble Kalman Filter update.
+
+    Implements the classic EnKF algorithm for state estimation using ensemble
+    covariance matrices. Computes the Kalman gain from ensemble statistics and
+    applies analysis update to all ensemble members.
+
+    Args:
+        iteration (int): Current iteration number (unused in standard EnKF)
+        state_predict (ndarray): Forecast ensemble states (num_states x num_ensemble)
+        state_in_ob (ndarray): Predicted observations (num_obs x num_ensemble)
+        obs (ndarray): Perturbed observations (num_obs x num_ensemble)
+        ob_err (ndarray): Observation error covariance matrix (num_obs x num_obs)
+        ob (ndarray): Original observations (num_obs,) - unused in standard EnKF
+
+    Returns:
+        ndarray: Updated ensemble states (num_states x num_ensemble) after Kalman update
+
+    Reference:
+        Evensen, G. (2003). "The Ensemble Kalman Filter: theoretical formulation
+        and practical implementation." Ocean Dynamics, 53(4), 343-367.
+        DOI: 10.1007/s10236-003-0036-9
+
+    Notes:
+        - Uses pseudoinverse for numerical stability with ill-conditioned matrices
+        - No inflation or localization applied (see variants for these features)
+        - Anomaly-based formulation reduces computational cost
+    """
+    # Step 1: Compute anomalies (mean-subtracted ensembles)
+    x = _ave_substracted(state_predict)   # X' ∈ ℝⁿˣᴺᵉ
+    hx = _ave_substracted(state_in_ob)    # Y' ∈ ℝᵐˣᴺᵉ
+
+    # Step 2: Compute cross-covariance P_xy = (1/(N_e-1)) X' Y'ᵀ
+    pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)  # ℝⁿˣᵐ
+
+    # Step 3: Compute observation covariance P_yy = (1/(N_e-1)) Y' Y'ᵀ
+    pzz = 1.0/(self.sample-1.0) * np.dot(hx, hx.T)  # ℝᵐˣᵐ
+
+    # Step 4: Compute Kalman gain K = P_xy (P_yy + R)⁻¹
+    # Using pseudoinverse for numerical stability
+    k = np.dot(pxz, np.linalg.pinv(pzz+ob_err))  # ℝⁿˣᵐ
+
+    # Step 5: Compute innovation (observation - prediction)
+    dx = np.dot(k, obs-state_in_ob)  # ℝⁿˣᴺᵉ
+
+    # Step 6: Apply analysis update
+    state_update = np.array(state_predict) + dx  # ℝⁿˣᴺᵉ
+
+    return state_update
+```
+
+**코드 분석:**
+
+1. **_ave_substracted() 함수 (lines 578-614):**
+   ```python
+   def _ave_substracted(m):
+       """Compute ensemble anomalies (deviation from mean)."""
+       samp = m.shape[1]
+       ave = np.array([np.mean(m, 1)])
+       ave = np.tile(ave.T, (1, samp))
+       ave_substracted = np.array(m) - ave
+       return ave_substracted
+   ```
+   - 앙상블 평균 계산: x̄ = (1/N_e) Σ x_i
+   - Broadcasting으로 각 멤버에서 평균 빼기
+   - 반환: X' with mean(X', axis=1) = 0
+
+2. **Pseudoinverse 사용:**
+   ```python
+   k = np.dot(pxz, np.linalg.pinv(pzz+ob_err))
+   ```
+   - np.linalg.pinv(): Moore-Penrose 유사역행렬
+   - SVD 기반: (P_yy + R) = U Σ Vᵀ → (P_yy + R)⁺ = V Σ⁺ Uᵀ
+   - Singular values σ_i < rcond × max(σ) → 0으로 처리
+   - ill-conditioned 행렬에 안정적
+
+3. **행렬 차원 확인:**
+   - state_predict: (n, N_e) = (24, 100)
+   - state_in_ob: (m, N_e) = (3456, 100)
+   - x = (n, N_e) = (24, 100)
+   - hx = (m, N_e) = (3456, 100)
+   - pxz = (n, m) = (24, 3456)
+   - pzz = (m, m) = (3456, 3456)
+   - ob_err = (m, m) = (3456, 3456) (diagonal)
+   - k = (n, m) = (24, 3456)
+   - dx = (n, N_e) = (24, 100)
+
+4. **계산 복잡도:**
+   - Anomaly: O(n×N_e + m×N_e) ≈ O(m×N_e)
+   - Cross-cov: O(n×m×N_e) ≈ O(3456×24×100) = 8.3M ops
+   - Obs-cov: O(m²×N_e) ≈ O(3456²×100) = 1.2B ops (most expensive)
+   - Pseudoinverse: O(m³) ≈ O(3456³) = 41B ops (dominant)
+   - Total: O(m³) dominated by matrix inversion
+
+5. **수치 안정성 고려:**
+   - Diagonal R → (P_yy + R) well-conditioned
+   - Pseudoinverse → singular value threshold
+   - No explicit regularization in standard EnKF
+
+
+2.1.3 관측 섭동(Observation Perturbation)
+
+파일: src/eki/Optimizer_EKI_np.py, lines 539-575
+
+```python
+def _perturb(ave, cov, samp, perturb=1e-30):
+    """
+    Perturb observations using Cholesky decomposition of covariance.
+
+    Generates ensemble of perturbed observations by adding correlated Gaussian
+    noise. The noise structure is determined by the Cholesky factorization of
+    the observation error covariance matrix.
+
+    Args:
+        ave (ndarray): Mean observation vector (num_obs,)
+        cov (ndarray): Observation error covariance matrix (num_obs x num_obs)
+        samp (int): Number of ensemble members (perturbation samples)
+        perturb (float, optional): Regularization term added to diagonal for
+                                    numerical stability. Default: 1e-30
+
+    Returns:
+        ndarray: Perturbed observations (num_obs x num_ensemble) where each column
+                 is ave + L * z, with L from Cholesky decomposition cov = L * L^T
+                 and z ~ N(0, I)
+
+    Notes:
+        - Uses Cholesky decomposition for efficiency (O(n^3) vs O(n^6) for eigen)
+        - Small regularization prevents Cholesky failure on singular matrices
+        - Perturbation preserves correlation structure defined by cov
+        - Essential for ensemble consistency in stochastic EnKF variants
+    """
+    dim = len(ave)
+
+    # Add small regularization for numerical stability
+    cov += np.eye(dim) * perturb
+
+    # Cholesky decomposition: R = L Lᵀ
+    chol_decomp = np.linalg.cholesky(cov)  # L ∈ ℝᵐˣᵐ (lower triangular)
+
+    # Generate uncorrelated Gaussian noise: z ~ N(0, I)
+    corr_perturb = np.random.normal(loc=0.0, scale=1.0, size=(dim, samp))
+
+    # Apply correlation structure: ε = L z ~ N(0, R)
+    perturbation = np.matmul(chol_decomp, corr_perturb)  # ε ∈ ℝᵐˣᴺᵉ
+
+    # Add perturbation to mean: y_i = y + ε_i
+    get_perturb = np.tile(ave, (samp, 1)).T + perturbation
+
+    return get_perturb
+```
+
+**수학적 원리:**
+
+  관측 오차 ε ~ N(0, R)을 생성하려면:
+
+  1. Cholesky 분해: R = L Lᵀ
+  2. 표준 정규 생성: z ~ N(0, I)
+  3. 변환: ε = L z
+  4. 증명:
+     E[ε] = L E[z] = 0
+     Cov[ε] = E[ε εᵀ] = E[L z zᵀ Lᵀ] = L E[z zᵀ] Lᵀ = L I Lᵀ = R
+
+**섭동 모드:**
+
+  파일: src/eki/Optimizer_EKI_np.py, lines 83-94
+
+  ```python
+  # Mode 1: Perturb once per time step
+  if input_config['perturb_option'] == 'On_time':
+      obs = _perturb(ob, ob_err, input_config['sample'])
+
+  # Mode 2: Perturb at every iteration
+  for i in iteration:
+      if input_config['perturb_option'] == 'On_iter':
+          obs = _perturb(ob, ob_err, input_config['sample'])
+  ```
+
+  - **On_time:** 관측 섭동을 타임스텝당 1회 (반복 간 동일)
+  - **On_iter:** 관측 섭동을 매 반복마다 (반복마다 다름)
+  - **Off:** 섭동 없음 (결정론적, 앙상블 일관성 약화)
+
+**v1.0 권장:**
+  EKI_PERTURB_OPTION: Off
+
+  이유: 단일 타임스텝 역산에서는 시간 반복 없음
+
+
+2.2 Adaptive EnKF
+──────────────────────────────────────────────────────────────
+
+2.2.1 수학적 공식
+
+**Motivation:**
+  - 표준 EnKF는 비선형성이 강하면 발산 또는 진동
+  - 해결: Kalman 이득에 스텝 크기 α ∈ (0, 1] 도입
+
+**Modified Kalman gain:**
+  K_α = P_xy (P_yy + α R)⁻¹
+
+**Modified observation error:**
+  R_α = α R
+
+**Modified perturbation:**
+  ε_α = √α ε
+
+**Analysis update:**
+  x_i^a = x_i^f + K_α (y_i + ξ_i - y_i^f)
+
+  여기서:
+    - ξ_i ~ N(0, R) : 추가 섭동 (ensemble consistency)
+    - α : 스텝 크기 (자동 계산)
+
+**Adaptive step size formula:**
+
+  데이터 misfit:
+    Φ_n = ||(R)^{-1/2} (y - G(x_n))||₂
+
+  여기서:
+    - x_n : n번째 반복의 앙상블 평균
+    - Φ_n : normalized residual (각 앙상블 멤버)
+
+  통계량:
+    Φ̄_n = E[Φ_n]  (empirical mean)
+    σ²_Φ = Var[Φ_n]  (empirical variance)
+
+  Step size:
+    α_inv = min(max(M/(2Φ̄_n), √(M/(2σ²_Φ))), 1 - T_n)
+
+  여기서:
+    - M : 관측 차원 (3456)
+    - T_n = Σ_{k=0}^{n-1} α_inv_k : 누적 스텝
+
+  수렴 조건:
+    T_n ≥ 1.0
+
+**물리적 의미:**
+  - Φ̄_n 크면 → misfit 큼 → α_inv 작음 → 작은 스텝 (안전)
+  - Φ̄_n 작으면 → misfit 작음 → α_inv 큼 → 큰 스텝 (빠른 수렴)
+  - σ²_Φ 크면 → 앙상블 불확실 → α_inv 작음 (보수적)
+
+
+2.2.2 LDM-EKI 구현
+
+파일: src/eki/Optimizer_EKI_np.py, lines 283-325
+
+```python
+def Adaptive_EnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob, alpha_inv):
+    """
+    Adaptive Ensemble Kalman Filter with automatic step size control.
+
+    Adjusts the update step size based on data misfit to prevent overshooting
+    and ensure convergence. Uses inflated observation error covariance scaled
+    by adaptive parameter alpha to control the update magnitude.
+
+    Args:
+        iteration (int): Current iteration number (unused in this implementation)
+        state_predict (ndarray): Forecast ensemble states (num_states x num_ensemble)
+        state_in_ob (ndarray): Predicted observations (num_obs x num_ensemble)
+        obs (ndarray): Perturbed observations (num_obs x num_ensemble)
+        ob_err (ndarray): Observation error covariance matrix (num_obs x num_obs)
+        ob (ndarray): Original observations (num_obs,) for perturbation
+        alpha_inv (float): Inverse step size parameter (1/alpha), computed from misfit
+
+    Returns:
+        ndarray: Updated ensemble states (num_states x num_ensemble) with adaptive damping
+
+    Reference:
+        Iglesias, M. A., Law, K. J. H., & Stuart, A. M. (2013). "Ensemble Kalman
+        methods for inverse problems." Inverse Problems, 29(4), 045001.
+        DOI: 10.1088/0266-5611/29/4/045001
+
+    Notes:
+        - alpha = 1/alpha_inv controls step size: larger alpha = smaller steps
+        - Observation error is inflated by alpha to slow convergence
+        - Additional perturbation xi ensures ensemble consistency
+        - Step size is automatically computed in Run() based on data misfit norm
+        - Converges when cumulative steps exceed 1.0 or step size becomes negligible
+    """
+    # Step 1: Compute anomalies
+    x = _ave_substracted(state_predict)
+    hx = _ave_substracted(state_in_ob)
+
+    # Step 2: Compute covariances
+    pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
+    pzz = 1.0/(self.sample-1.0) * np.dot(hx, hx.T)
+
+    # Step 3: Compute alpha (step size)
+    alpha = 1.0/alpha_inv
+
+    # Step 4: Compute modified Kalman gain with inflated error
+    # K_α = P_xy (P_yy + α R)⁻¹
+    k_modified = np.dot(pxz, np.linalg.pinv(pzz + alpha * ob_err))
+
+    # Step 5: Generate additional perturbation for ensemble consistency
+    # ξ ~ N(0, R)
+    xi = _perturb(np.zeros(ob.shape), ob_err, self.sample)
+
+    # Step 6: Compute modified innovation
+    # innovation = (y + √α ξ) - G(x)
+    perturbed_diff = obs + np.sqrt(alpha) * xi - state_in_ob
+
+    # Step 7: Compute update increment
+    dx = np.dot(k_modified, perturbed_diff)
+
+    # Step 8: Apply analysis update
+    state_update = np.array(state_predict) + dx
+
+    return state_update
+```
+
+**Alpha 계산 (메인 루프):**
+
+파일: src/eki/Optimizer_EKI_np.py, lines 99-122
+
+```python
+# Initialize cumulative step
+alpha_inv_history = []
+T_n = 0.0
+
+for i in iteration:
+    # Compute data misfit norm
+    if input_config['Adaptive_EKI'] == 'On':
+        Phi_n = compute_Phi_n(obs, state_in_ob, ob_err)
+        alpha_inv = compute_alpha_inv(len(state_in_ob), Phi_n, alpha_inv_history, i)
+        alpha_inv_history.append(alpha_inv)
+
+        # Check for negative step (invalid)
+        if alpha_inv < 0.0:
+            print(f"Adaptive EKI converged (negative step) at iteration {i+1}")
+            break
+
+        # Update cumulative step
+        T_n_new = T_n + alpha_inv
+
+        # Convergence check: T_n >= 1.0
+        if T_n_new > 1.05:  # 5% tolerance
+            print(f"Adaptive EKI converged (T_n={T_n_new:.3f} >= 1.0) at iteration {i+1}")
+            break
+        elif len(alpha_inv_history) > 2 and alpha_inv < 0.01:  # Step < 1%
+            print(f"Adaptive EKI converged (small step={alpha_inv:.4f}) at iteration {i+1}")
+            break
+
+        T_n = T_n_new
+```
+
+**Phi_n 계산:**
+
+파일: src/eki/Optimizer_EKI_np.py, lines 718-721
+
+```python
+def compute_Phi_n(y, state_in_ob, Gamma):
+    """
+    Compute normalized residual for each ensemble member.
+
+    Φ_i = ||R^{-1/2} (y_i - G(x_i))||₂
+    """
+    # R^{-1/2} (y - G(x))
+    results_matrix = np.dot(np.linalg.pinv(Gamma)**0.5, (y - state_in_ob))
+
+    # L2 norm for each ensemble member (column)
+    phi_n = np.linalg.norm(results_matrix, ord=2, axis=0)  # shape: (N_e,)
+
+    return phi_n
+```
+
+**Alpha_inv 계산:**
+
+파일: src/eki/Optimizer_EKI_np.py, lines 724-735
+
+```python
+def compute_alpha_inv(M, Phi_n, alpha_inv_history, n):
+    """
+    Compute adaptive step size.
+
+    α_inv = min(max(M/(2Φ̄), √(M/(2σ²_Φ))), 1 - T_n)
+    """
+    # Empirical statistics of Phi_n
+    Phi_mean = np.mean(Phi_n)  # Φ̄
+    Phi_var = np.var(Phi_n)    # σ²_Φ
+
+    # Cumulative step so far
+    t_n = sum(alpha_inv_history[:n]) if n != 1 else 0
+
+    # Adaptive formula with bounds
+    alpha_inv = min(
+        max(M/(2.0 * Phi_mean), np.sqrt(M/(2.0 * Phi_var))),
+        1.0 - t_n
+    )
+
+    return alpha_inv
+```
+
+**수렴 전략:**
+
+  1. **Primary criterion:** T_n ≥ 1.05
+     - 누적 스텝이 1.0을 5% 초과
+     - 5% tolerance는 수치 오차 고려
+
+  2. **Secondary criterion:** α_inv < 0.01
+     - 스텝 크기가 1% 미만
+     - 더 이상 의미 있는 업데이트 불가
+
+  3. **Tertiary criterion:** α_inv < 0
+     - 음수 스텝 (비정상)
+     - 즉시 종료
+
+
+2.3 Regularized EnKF (REnKF)
+──────────────────────────────────────────────────────────────
+
+2.3.1 수학적 공식
+
+**Motivation:**
+  - 역문제의 ill-posedness → 비물리적 해
+  - 특히 비음수 제약 (방출량 ≥ 0) 위반
+
+**Constrained optimization:**
+
+  목적 함수:
+    J(x) = ||y - G(x)||²_R + λ Σ g(x_i)
+
+  여기서:
+    - ||y - G(x)||²_R : data misfit
+    - g(x_i) : penalty function
+    - λ : regularization strength
+
+**Penalty function (tanh-based):**
+
+  g(x) = {
+    tanh(x)              if x < 0      (negative penalty)
+    tanh(x - x_max)      if x > x_max  (overflow penalty)
+    0                    otherwise
+  }
+
+  미분:
+    g'(x) = {
+      1 - tanh²(x)              if x < 0
+      1 - tanh²(x - x_max)      if x > x_max
+      0                         otherwise
+    }
+
+**물리적 의미:**
+  - x < 0 : 음수 방출 (비물리적) → penalty 증가
+  - x > x_max : 과도한 방출 (수치 불안정) → penalty 증가
+  - tanh 사용: 부드러운 제약 (미분 가능)
+
+**Analysis update with constraint:**
+
+  x_i^a = x_i^f + K(y_i - y_i^f) + K_c g'(x_i^f)
+
+  여기서:
+    - K : 표준 Kalman 이득
+    - K_c = -P^f + K P_yx : constraint correction gain
+    - g'(x) : penalty gradient
+
+**Lagrange multiplier 해석:**
+
+  K_c g'(x) = -∂/∂x [λ Σ g(x_i)]
+
+  즉, penalty 항의 gradient를 업데이트에 반영
+
+
+2.3.2 LDM-EKI 구현
+
+파일: src/eki/Optimizer_EKI_np.py, lines 469-536
+
+```python
+def REnKF(self, iteration, state_predict, state_in_ob, obs, ob_err, ob):
+    """
+    Regularized Ensemble Kalman Filter with non-negativity constraints.
+
+    Adds penalty function to enforce state bounds during update.
+
+    Args:
+        iteration (int): Current iteration number
+        state_predict (ndarray): Current ensemble states (num_states × num_ensemble)
+        state_in_ob (ndarray): Forward model predictions (num_obs × num_ensemble)
+        obs (ndarray): Observed data with perturbations (num_obs × num_ensemble)
+        ob_err (ndarray): Observation error covariance matrix (num_obs × num_obs)
+        ob (ndarray): Original observed data vector (num_obs,)
+
+    Returns:
+        ndarray: Updated ensemble states satisfying constraints (num_states × num_ensemble)
+
+    Note:
+        Uses tanh-based penalty function for smooth constraint handling.
+        Lower bound typically 0.0 (non-negative emissions).
+        Upper bound set to 1.0e+15 to prevent numerical overflow.
+        Regularization strength controlled by self.lambda_value.
+    """
+
+    # Define penalty function: g(x) = tanh(x) for x < 0
+    def tanh_penalty(x):
+        return np.tanh(x)
+
+    # Define penalty derivative: g'(x) = 1 - tanh²(x)
+    def tanh_penalty_derivative(x):
+        return 1 - np.tanh(x) ** 2
+
+    # Apply penalty only to constrained regions
+    def constraint_func(x):
+        penalty = np.zeros_like(x)
+        penalty[x < 0.0] = tanh_penalty(x[x < 0.0])
+        penalty[x > 1.0e+15] = tanh_penalty(x[x > 1.0e+15] - 1.0e+15)
+        return penalty
+
+    # Apply penalty derivative only to constrained regions
+    def constraint_derivative(x):
+        derivative = np.zeros_like(x)
+        derivative[x < 0] = tanh_penalty_derivative(x[x < 0])
+        derivative[x > 1e+15] = tanh_penalty_derivative(x[x > 1e+15] - 1e+15)
+        return derivative
+
+    # Regularization strength (can vary with iteration)
+    def lambda_function(iteration):
+        lambda_value = self.lambda_value  # From config: EKI_RENKF_LAMBDA
+        return lambda_value
+
+    # Standard EnKF update (Steps 1-5)
+    x = _ave_substracted(state_predict)
+    hx = _ave_substracted(state_in_ob)
+    pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
+    pzz = 1.0/(self.sample-1.0) * np.dot(hx, hx.T)
+    k = np.dot(pxz, np.linalg.pinv(pzz+ob_err))
+    dx = np.dot(k, obs-state_in_ob)
+
+    # Compute constraint correction gain (Step 6)
+    # K_c = -P^f + K P_yx
+    pxx = 1.0/(self.sample-1.0) * np.dot(x, x.T)  # Forecast covariance P^f
+    pzx = 1.0/(self.sample-1.0) * np.dot(hx, x.T)  # Cross-covariance P_yx
+    k_constraints = -pxx + np.dot(k, pzx)
+
+    # Compute penalty term for each ensemble member (Step 7)
+    constraint_mat = np.zeros([len(state_predict), self.sample])
+    w = np.identity(state_predict.shape[0])  # Weight matrix (identity for uniform penalty)
+    lamda = lambda_function(iteration)
+
+    for j in range(self.sample):
+        jstate = state_predict[:, j]  # j-th ensemble member
+
+        # Gradient: g'(x_j)ᵀ W
+        gw = np.dot(constraint_derivative(jstate).T, w)
+
+        # Penalty contribution: g'(x_j)ᵀ W g(x_j)
+        gwg = np.dot(gw, constraint_func(jstate))
+
+        # Store with regularization strength
+        constraint_mat[:, j] += lamda * gwg
+
+    # Apply constraint correction (Step 8)
+    dx_constraints = np.dot(k_constraints, constraint_mat)
+
+    # Final update (Step 9)
+    state_update = state_predict + dx + dx_constraints
+
+    return state_update
+```
+
+**Constraint bounds:**
+  - Lower: 0.0 (non-negative emission)
+  - Upper: 1.0e+15 Bq (prevent overflow)
+
+**Lambda selection:**
+  파일: input/eki.conf
+  ```
+  EKI_REGULARIZATION: On
+  EKI_RENKF_LAMBDA: 0.9
+  ```
+
+  - λ = 0.0 : no regularization (standard EnKF)
+  - λ = 0.5 : moderate penalty
+  - λ = 0.9 : strong penalty (recommended)
+  - λ = 1.0 : very strong (may over-regularize)
+
+**Trade-off:**
+  - λ ↑ : 제약 만족 ↑, data fit ↓
+  - λ ↓ : data fit ↑, 제약 위반 가능성 ↑
+
+
+2.4 EnKF with Localizer (비활성화됨)
+──────────────────────────────────────────────────────────────
+
+2.4.1 수학적 공식 (참고용)
+
+**Motivation:**
+  - 제한된 앙상블 크기 → 가짜 상관관계
+  - Localization: 거리에 따라 공분산 감쇠
+
+**Gaspari-Cohn 함수:**
+
+  ρ(r, L) = {
+    1 - 5(r/L)²/3 + 5(r/L)³/8,                        if 0 ≤ r ≤ L
+    4 - 5r/L + 5(r/L)²/3 + 5(r/L)³/24 - 5(r/L)⁴/12,  if L < r ≤ 2L
+    0,                                                 if r > 2L
+  }
+
+  여기서:
+    - r : 변수 간 거리
+    - L : localization radius (cutoff length)
+
+**LDM-EKI 간소화 (Gaussian approximation):**
+
+  ρ(r, L) ≈ exp(-r²/(2L²))
+
+  장점:
+    - 계산 간단 (exponential)
+    - 미분 가능
+    - 모든 r에서 정의 (cutoff 없음)
+
+**Localized covariance:**
+
+  P̃_xy = ρ ⊙ P_xy
+  P̃_yy = ρ ⊙ P_yy
+
+  여기서:
+    - ⊙ : element-wise (Schur) product
+    - ρ : localization matrix
+
+**Separable localization:**
+
+  2D case (state × observation):
+    ρ(i, j) = ρ_x(i) × ρ_y(j)
+
+  여기서:
+    - ρ_x(i) = exp(-i²/(2L²)) : state dimension taper
+    - ρ_y(j) = exp(-j²/(2L²)) : observation dimension taper
+
+
+2.4.2 LDM-EKI 구현 (비활성화)
+
+파일: src/eki/Optimizer_EKI_np.py, lines 327-359
+
+```python
+def centralized_localizer(matrix, L):
+    """
+    Apply separable Gaspari-Cohn localization using 1D tapers.
+
+    For a (m, n) covariance matrix, creates localization taper
+    as outer product of 1D tapers for each dimension.
+
+    Args:
+        matrix: Covariance matrix (m × n)
+        L: Localization length scale (in grid units)
+
+    Returns:
+        localized_matrix: Localized covariance (m × n)
+    """
+    # Create 1D tapering functions for each dimension using Gaussian
+    # This avoids the broadcasting error from trying to multiply (m,m) and (n,n) matrices
+    taper1 = np.exp(-np.arange(matrix.shape[0])**2 / (2*L**2))  # (m,)
+    taper2 = np.exp(-np.arange(matrix.shape[1])**2 / (2*L**2))  # (n,)
+
+    # Outer product creates (m, n) localization matrix
+    Psi = taper1[:, np.newaxis] * taper2[np.newaxis, :]  # (m, n)
+
+    # Clip very small values to prevent numerical issues
+    # Values below 1e-10 are set to 0 (complete decorrelation)
+    Psi = np.where(Psi < 1e-10, 0.0, Psi)
+
+    # Element-wise multiplication with safety check for NaN/Inf
+    localized_matrix = matrix * Psi
+
+    # Replace NaN/Inf with 0 for numerical stability
+    localized_matrix = np.nan_to_num(localized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return localized_matrix
+```
+
+**적용 (Standard EnKF with Localizer):**
+
+파일: src/eki/Optimizer_EKI_np.py, lines 361-376
+
+```python
+def EnKF_with_Localizer(self, iteration, state_predict, state_in_ob, obs, ob_err, ob,
+                       localizer_func):
+    x = _ave_substracted(state_predict)
+    hx = _ave_substracted(state_in_ob)
+    pxz = 1.0/(self.sample-1.0) * np.dot(x, hx.T)
+    pzz = 1.0/(self.sample-1.0) * np.dot(hx, hx.T)
+
+    # Apply localization to covariances
+    pxz = localizer_func(pxz, self.weighting_factor)
+    pzz = localizer_func(pzz, self.weighting_factor)
+
+    # Use higher rcond for numerical stability with localization
+    k_modified = np.dot(pxz, np.linalg.pinv(pzz + ob_err, rcond=1e-10))
+    dx = np.dot(k_modified, obs-state_in_ob)
+    state_update = state_predict + dx
+    return state_update
+```
+
+**비활성화 이유:**
+
+파일: LOCALIZED_DISABLED.md, lines 27-35
+
+```
+After comprehensive testing of all 16 combinations of EKI advanced options:
+- **Technical tests passed**: All 16 combinations completed without errors
+- **Physical validation failed**: The localized results showed signs of being physically incorrect
+- **User validation**: Domain expert review indicated the feature is not production-ready
+
+**Reference tests:**
+- `test/TEST_RESULTS_FINAL.md` - All 16 combinations passed technical tests
+- `test/FIXES_APPLIED.md` - Three bugs were fixed in the implementation
+- User feedback: "뭔가 LOCALIZED가 작동을 안하는거같아" (LOCALIZED seems not to be working)
+```
+
+**하드코딩 위치:**
+
+파일: src/eki/eki_shm_config.py, lines 78-82
+
+```python
+# ⚠️  HARD-CODED TO 'Off' FOR v1.0 DEPLOYMENT
+# The LOCALIZED option is disabled for this release due to concerns about
+# physical correctness. This is the only allowed hard-coding exception.
+# Future releases will re-enable this after additional validation.
+'Localized_EKI': 'Off',  # Always Off, ignoring shm_data['localized_eki']
+```
+
+**대안 (v1.0):**
+  1. 앙상블 크기 증가 (50 → 100)
+  2. Regularization 사용 (EKI_REGULARIZATION: On)
+  3. 더 나은 prior 설계
+
+
+2.5 기타 알고리즘 (간략 설명)
+──────────────────────────────────────────────────────────────
+
+2.5.1 EnRML (Ensemble Randomized Maximum Likelihood)
+
+파일: src/eki/Optimizer_EKI_np.py, lines 402-435
+
+**특징:**
+  - Gauss-Newton 근사 사용
+  - 이전 반복의 초기 상태 x₀ 기억
+  - Sensitivity matrix: S = Y'(X')⁺
+
+**수식:**
+  dx = K_GN [(y - G(x)) + S(x - x₀)]
+  K_GN = P₀ Sᵀ (S P₀ Sᵀ + R)⁻¹
+
+**장점:**
+  - 강한 비선형성 처리
+  - 반복적 개선
+
+**단점:**
+  - 계산 비용 높음 (sensitivity matrix)
+  - 수렴 보장 없음
+
+**v1.0 상태:**
+  - 구현됨 but 기본 비활성화
+  - 필요시 수동 활성화 가능
+
+
+2.5.2 EnKF_MDA (Multiple Data Assimilation)
+
+파일: src/eki/Optimizer_EKI_np.py, lines 437-467
+
+**특징:**
+  - 관측을 N_a번 반복 동화
+  - 관측 오차 증폭: R_MDA = α R
+
+**수식:**
+  α = N_a (inflation factor)
+
+  for k = 1 to N_a:
+    y_k = y + √α ε
+    x^a_k = EnKF(x^f_k, y_k, α R)
+
+**장점:**
+  - 비선형성 완화
+  - 점진적 업데이트
+
+**단점:**
+  - 계산 비용 N_a배 증가
+  - α 선택 어려움
+
+**v1.0 상태:**
+  - 구현됨 but 기본 비활성화
+  - config에서 활성화 가능 (EnKF_MDA_steps)
+
+
+################################################################################
+#
+#  Part 1 요약
+#
+################################################################################
+
+이 Part 1에서 다룬 내용:
+
+1. **개요 및 배경 (200줄):**
+   - 역문제의 정의 및 난해성
+   - Bayesian 역산 프레임워크
+   - LDM-EKI 적용 (상태 벡터, 관측 벡터, 순방향 연산자)
+   - 방사능 소스 역추정 문제의 특징
+   - 주요 도전 과제 (앙상블 크기, 비선형성, 가짜 상관관계, 수렴 판정)
+
+2. **EKI 알고리즘 구현 상세 (600줄):**
+   - **Standard EnKF:** 전체 코드 및 수학 공식 상세 분석
+   - **Adaptive EnKF:** 스텝 크기 자동 조절 메커니즘 완전 분석
+   - **Regularized EnKF:** tanh penalty function을 이용한 비음수 제약
+   - **EnKF with Localizer:** Gaspari-Cohn 함수 (비활성화 이유 포함)
+   - **EnRML, EnKF_MDA:** 간략 소개
+
+각 알고리즘에 대해:
+  ✓ 수학적 공식 (LaTeX 스타일)
+  ✓ 전체 Python 구현 코드 (주석 포함)
+  ✓ 코드-이론 대응 관계
+  ✓ 행렬 차원 확인
+  ✓ 계산 복잡도 분석
+  ✓ 수치 안정성 고려사항
+
+**다음 Part 2에서 다룰 내용:**
+  - LOCALIZED 옵션 검증 과정
+  - 발견된 3개 버그 및 수정 내역
+  - 16가지 조합 테스트 결과
+  - 물리적 타당성 검증 실패 분석
+
+**다음 Part 3에서 다룰 내용:**
+  - 수렴 특성 분석
+  - 파라미터 튜닝 가이드
+  - 알고리즘별 성능 비교
+  - 검증 결과 요약 및 권장사항
+
+################################################################################
+# End of Part 1
+################################################################################

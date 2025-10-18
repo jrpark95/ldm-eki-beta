@@ -1,0 +1,1000 @@
+================================================================================
+                LDM-EKI IPC 통신 시스템 기술 보고서
+                          Part 2 of 3
+              C++ Reader & Python IPC 모듈 (축소판)
+================================================================================
+
+작성일: 2025-10-18
+작성자: LDM-EKI 개발팀
+분량: ~700줄 (핵심 내용만)
+
+본 문서는 Part 2의 축소판으로, 핵심 내용만 포함합니다.
+전체 분석은 Part 2 완전판을 참조하세요.
+
+================================================================================
+[목차]
+================================================================================
+
+1. C++ EKI Reader 요약
+   1.1 EKIReader 클래스 개요
+   1.2 waitForEnsembleData() - 신선도 검증
+   1.3 readEnsembleStates() - 데이터 읽기
+
+2. Python IPC 모듈 요약
+   2.1 eki_ipc_reader.py 핵심
+   2.2 eki_ipc_writer.py 핵심
+   2.3 eki_shm_config.py 핵심
+
+3. 통신 프로토콜 요약
+   3.1 3단계 통신 시퀀스
+   3.2 Row/Column Major 변환 예제
+
+================================================================================
+[1. C++ EKI Reader 요약]
+================================================================================
+
+[1.1] EKIReader 클래스 개요
+--------------------------------------------------------------------------------
+
+**위치:** src/ipc/ldm_eki_reader.cuh/cu
+**목적:** Python으로부터 업데이트된 앙상블 상태 읽기 (Python → C++)
+
+**핵심 데이터 구조:**
+
+```cpp
+// 설정 구조체 (12 bytes)
+struct EnsembleConfig {
+    int32_t num_states;      // 상태 변수 개수 (예: 24 timesteps)
+    int32_t num_ensemble;    // 앙상블 멤버 개수 (예: 100)
+    int32_t timestep_id;     // 반복 번호 (신선도 검증용)
+};
+
+// 데이터 헤더 (12 bytes + data)
+struct EnsembleDataHeader {
+    int32_t status;          // 0=작성중, 1=완료
+    int32_t rows;            // num_states
+    int32_t cols;            // num_ensemble
+    // float data[] follows
+};
+```
+
+**공유 메모리 세그먼트:**
+- `/dev/shm/ldm_eki_ensemble_config` : 설정 (12 bytes)
+- `/dev/shm/ldm_eki_ensemble_data` : 데이터 (헤더 + num_states × num_ensemble × 4 bytes)
+
+**멤버 변수:**
+```cpp
+class EKIReader {
+private:
+    int config_fd;         // 설정 파일 디스크립터
+    int data_fd;           // 데이터 파일 디스크립터
+    void* config_map;      // 설정 메모리 맵
+    void* data_map;        // 데이터 메모리 맵
+    size_t data_size;      // 데이터 크기
+    bool initialized;      // 초기화 플래그
+};
+```
+
+--------------------------------------------------------------------------------
+[1.2] waitForEnsembleData() - 신선도 검증
+--------------------------------------------------------------------------------
+
+**목적:**
+Python이 새로운 앙상블 상태를 쓸 때까지 대기. timestep_id를 사용해 이미 읽은
+데이터를 다시 읽지 않도록 신선도 검증.
+
+**핵심 로직:**
+
+```cpp
+bool EKIReader::waitForEnsembleData(int timeout_seconds, int expected_iteration) {
+    const char* config_path = "/dev/shm/ldm_eki_ensemble_config";
+    const char* data_path = "/dev/shm/ldm_eki_ensemble_data";
+
+    // 정적 변수로 마지막 읽은 반복 번호 저장
+    static int last_iteration_id = -1;
+
+    // 타임아웃까지 1초마다 폴링
+    for (int i = 0; i < timeout_seconds; i++) {
+        if (access(config_path, F_OK) == 0 && access(data_path, F_OK) == 0) {
+            // 설정 파일 열기
+            int config_fd = open(config_path, O_RDONLY);
+            if (config_fd >= 0) {
+                EnsembleConfig config;
+                read(config_fd, &config, sizeof(config));
+                close(config_fd);
+
+                // 신선도 검증: 새로운 iteration인가?
+                if (config.timestep_id > last_iteration_id) {
+                    // 데이터 파일도 준비되었는지 확인
+                    int test_fd = open(data_path, O_RDONLY);
+                    if (test_fd >= 0) {
+                        EnsembleDataHeader header;
+                        read(test_fd, &header, sizeof(header));
+                        close(test_fd);
+
+                        // status=1이면 Python이 쓰기 완료
+                        if (header.status == 1) {
+                            std::cout << "✓ Fresh data detected (iteration "
+                                      << config.timestep_id << ")\n";
+                            last_iteration_id = config.timestep_id;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        sleep(1);  // 1초 대기 (CPU 사용률 최소화)
+    }
+
+    std::cerr << "[ERROR] Timeout waiting for ensemble data\n";
+    return false;
+}
+```
+
+**폴링 전략:**
+- 체크 간격: 1초
+- 상태 출력: 5초마다
+- CPU 사용률: ~0.01% (sleep 사용)
+
+**신선도 검증:**
+- `static int last_iteration_id`: 마지막 읽은 반복 번호
+- `config.timestep_id > last_iteration_id`: 새로운 데이터만 읽기
+- 중복 읽기 방지
+
+--------------------------------------------------------------------------------
+[1.3] readEnsembleStates() - 데이터 읽기
+--------------------------------------------------------------------------------
+
+**목적:**
+Python이 쓴 앙상블 상태 행렬 (states × ensembles)을 읽어서 std::vector에 저장.
+
+**핵심 로직:**
+
+```cpp
+bool EKIReader::readEnsembleStates(std::vector<float>& output,
+                                    int& num_states, int& num_ensemble) {
+    // 1. 설정 읽기
+    int timestep_id;
+    if (!readEnsembleConfig(num_states, num_ensemble, timestep_id)) {
+        return false;
+    }
+
+    const char* shm_path = "/dev/shm/ldm_eki_ensemble_data";
+
+    // 2. 데이터 파일 열기
+    data_fd = open(shm_path, O_RDONLY);
+    if (data_fd < 0) {
+        perror("Failed to open data");
+        return false;
+    }
+
+    // 3. 파일 크기 확인
+    struct stat st;
+    fstat(data_fd, &st);
+    size_t file_size = st.st_size;
+    size_t expected_size = sizeof(EnsembleDataHeader)
+                         + num_states * num_ensemble * sizeof(float);
+
+    if (file_size != expected_size) {
+        std::cerr << "[ERROR] Size mismatch: file=" << file_size
+                  << ", expected=" << expected_size << "\n";
+        close(data_fd);
+        return false;
+    }
+
+    // 4. 메모리 맵
+    data_map = mmap(nullptr, file_size, PROT_READ, MAP_SHARED, data_fd, 0);
+    if (data_map == MAP_FAILED) {
+        perror("mmap failed");
+        close(data_fd);
+        return false;
+    }
+
+    // 5. 헤더 검증
+    auto* header = reinterpret_cast<EnsembleDataHeader*>(data_map);
+    if (header->status != 1) {
+        std::cerr << "[ERROR] Data not ready (status=" << header->status << ")\n";
+        munmap(data_map, file_size);
+        close(data_fd);
+        return false;
+    }
+
+    if (header->rows != num_states || header->cols != num_ensemble) {
+        std::cerr << "[ERROR] Dimension mismatch\n";
+        munmap(data_map, file_size);
+        close(data_fd);
+        return false;
+    }
+
+    // 6. 데이터 복사
+    float* data_ptr = reinterpret_cast<float*>(
+        reinterpret_cast<uint8_t*>(data_map) + sizeof(EnsembleDataHeader)
+    );
+
+    size_t data_count = num_states * num_ensemble;
+    output.resize(data_count);
+    std::memcpy(output.data(), data_ptr, data_count * sizeof(float));
+
+    // 7. 통계 계산 (디버깅용)
+    float min_val = *std::min_element(output.begin(), output.end());
+    float max_val = *std::max_element(output.begin(), output.end());
+    float sum = std::accumulate(output.begin(), output.end(), 0.0f);
+    float mean_val = sum / data_count;
+
+    std::cout << "[IPC] Ensemble states loaded: " << num_states << "×" << num_ensemble
+              << " (" << data_count * sizeof(float) / 1024.0 << " KB)\n";
+    std::cout << "  Range: [" << min_val << ", " << max_val << "], mean=" << mean_val << "\n";
+
+    // 8. Memory Doctor 로깅 (활성화 시)
+    if (g_memory_doctor.isEnabled()) {
+        g_memory_doctor.logReceivedData("ensemble_states", output.data(),
+                                       num_states, num_ensemble, timestep_id,
+                                       "EKI iteration from Python");
+    }
+
+    // 9. 정리
+    munmap(data_map, file_size);
+    close(data_fd);
+    data_map = nullptr;
+    data_fd = -1;
+
+    return true;
+}
+```
+
+**단계 요약:**
+1. 설정 읽기 (12 bytes)
+2. 데이터 파일 열기
+3. 파일 크기 검증 (예상 크기와 일치?)
+4. 메모리 맵 (mmap)
+5. 헤더 검증 (status=1, dimensions 일치?)
+6. 데이터 복사 (memcpy → std::vector)
+7. 통계 계산 (min/max/mean)
+8. Memory Doctor 로깅 (활성화 시)
+9. 메모리 언맵 및 파일 닫기
+
+**성능:**
+- 전형적 크기: 24 states × 100 ensembles = 9.6 KB
+- 읽기 시간: < 1ms
+
+================================================================================
+[2. Python IPC 모듈 요약]
+================================================================================
+
+[2.1] eki_ipc_reader.py 핵심
+--------------------------------------------------------------------------------
+
+**목적:** C++로부터 관측값 및 앙상블 관측값 읽기 (C++ → Python)
+
+**핵심 클래스: EKIIPCReader**
+
+```python
+class EKIIPCReader:
+    """
+    POSIX Shared Memory Reader for EKI data communication.
+    """
+
+    # 공유 메모리 이름 (C++와 동일)
+    SHM_CONFIG_NAME = "/ldm_eki_config"
+    SHM_DATA_NAME = "/ldm_eki_data"
+
+    def __init__(self):
+        self.ensemble_size = None
+        self.num_receptors = None
+        self.num_timesteps = None
+        self._config_loaded = False
+
+    def read_eki_config(self) -> Tuple[int, int, int]:
+        """
+        Read basic EKI configuration (12 bytes).
+
+        Returns:
+            (ensemble_size, num_receptors, num_timesteps)
+        """
+        config_path = f"/dev/shm{self.SHM_CONFIG_NAME}"
+
+        with open(config_path, 'rb') as f:
+            data = f.read(12)  # 3 × int32
+            if len(data) != 12:
+                raise RuntimeError(f"Invalid config size: {len(data)} bytes")
+
+            # Little-endian int32
+            self.ensemble_size, self.num_receptors, self.num_timesteps = \
+                struct.unpack('<3i', data)
+            self._config_loaded = True
+
+            return self.ensemble_size, self.num_receptors, self.num_timesteps
+
+    def read_eki_observations(self) -> np.ndarray:
+        """
+        Read observation matrix from shared memory.
+
+        Returns:
+            2D array (num_receptors, num_timesteps)
+        """
+        if not self._config_loaded:
+            raise RuntimeError("Config must be loaded first")
+
+        data_path = f"/dev/shm{self.SHM_DATA_NAME}"
+
+        fd = os.open(data_path, os.O_RDONLY)
+        try:
+            st = os.fstat(fd)
+            total_bytes = st.st_size
+
+            # 메모리 맵
+            mm = mmap.mmap(fd, length=total_bytes, access=mmap.ACCESS_READ)
+            try:
+                # 헤더 읽기 (12 bytes)
+                header_data = mm[:12]
+                status, rows, cols = struct.unpack('<3i', header_data)
+
+                if status != 1:
+                    raise RuntimeError(f"Data not ready (status={status})")
+
+                # Dimension 검증
+                if rows != self.num_receptors or cols != self.num_timesteps:
+                    raise RuntimeError(f"Dimension mismatch")
+
+                # 데이터 읽기
+                data_offset = 12
+                data_count = rows * cols
+
+                mv = memoryview(mm)[data_offset:data_offset + data_count * 4]
+                observations = np.frombuffer(mv, dtype=np.float32, count=data_count)
+
+                # Reshape: (receptors, timesteps) - row-major
+                observations_2d = observations.reshape((rows, cols), order='C')
+
+                result = observations_2d.copy()  # 복사 (mmap 닫아도 유효)
+
+            finally:
+                mm.close()
+
+            return result
+        finally:
+            os.close(fd)
+```
+
+**편의 함수: receive_gamma_dose_matrix_shm()**
+
+```python
+def receive_gamma_dose_matrix_shm() -> np.ndarray:
+    """
+    초기 관측값 읽기 (3D 배열 반환).
+
+    Returns:
+        3D array (1, num_receptors, num_timesteps)
+    """
+    reader = EKIIPCReader()
+
+    # 1. 설정 읽기
+    ensemble_size, num_receptors, num_timesteps = reader.read_eki_config()
+
+    # 2. 관측값 읽기
+    observations_2d = reader.read_eki_observations()
+
+    # 3. 배치 차원 추가 (legacy 인터페이스 호환)
+    observations_3d = np.expand_dims(observations_2d, axis=0)
+
+    # 4. Memory Doctor 로깅
+    if memory_doctor.is_enabled():
+        memory_doctor.log_received_data("initial_observations", observations_2d, 0,
+                                       f"LDM->Python initial {num_receptors}x{num_timesteps}")
+
+    return observations_3d
+```
+
+**앙상블 관측값 읽기: receive_ensemble_observations_shm()**
+
+```python
+def receive_ensemble_observations_shm(current_iteration=None):
+    """
+    앙상블 관측값 읽기 (각 반복마다 호출).
+
+    Returns:
+        3D array (num_ensemble, num_timesteps, num_receptors)
+    """
+    config_path = "/dev/shm/ldm_eki_ensemble_obs_config"
+    data_path = "/dev/shm/ldm_eki_ensemble_obs_data"
+
+    # 1. 설정 읽기
+    with open(config_path, 'rb') as f:
+        config_data = f.read(12)
+        ensemble_size, num_receptors, num_timesteps = struct.unpack('<3i', config_data)
+
+    # 2. 데이터 읽기
+    with open(data_path, 'rb') as f:
+        mmapped_file = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
+        expected_size = ensemble_size * num_receptors * num_timesteps * 4
+        data = mmapped_file.read(expected_size)
+
+        flat_array = np.frombuffer(data, dtype=np.float32)
+
+        # Reshape: (ensemble, timesteps, receptors)
+        # C++ 메모리 순서: [Ens0: T0_R0, T0_R1, ..., T1_R0, ...]
+        observations = flat_array.reshape(ensemble_size, num_timesteps, num_receptors)
+
+        mmapped_file.close()
+
+        # Memory Doctor 로깅
+        if memory_doctor.is_enabled():
+            iteration = current_iteration if current_iteration is not None else 0
+            memory_doctor.log_received_data("ensemble_observations", observations, iteration,
+                                           f"LDM->Python ensemble {ensemble_size}x{num_timesteps}x{num_receptors}")
+
+        return observations
+```
+
+--------------------------------------------------------------------------------
+[2.2] eki_ipc_writer.py 핵심
+--------------------------------------------------------------------------------
+
+**목적:** Python에서 앙상블 상태를 C++로 전송 (Python → C++)
+
+**핵심 클래스: EKIIPCWriter**
+
+```python
+class EKIIPCWriter:
+    """
+    POSIX Shared Memory Writer for ensemble state data.
+    """
+
+    SHM_ENSEMBLE_CONFIG_NAME = "/ldm_eki_ensemble_config"
+    SHM_ENSEMBLE_DATA_NAME = "/ldm_eki_ensemble_data"
+
+    def __init__(self):
+        self.config_written = False
+        self.current_iteration = 0
+
+    def write_ensemble_config(self, num_states: int, num_ensemble: int,
+                              iteration: int = 0) -> bool:
+        """
+        Write configuration (12 bytes).
+        """
+        config_path = f"/dev/shm{self.SHM_ENSEMBLE_CONFIG_NAME}"
+
+        try:
+            with open(config_path, 'wb') as f:
+                config_data = struct.pack('<3i', num_states, num_ensemble, iteration)
+                f.write(config_data)
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.chmod(config_path, 0o660)
+            self.config_written = True
+            self.current_iteration = iteration
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to write ensemble config: {e}")
+            return False
+
+    def write_ensemble_states(self, states: np.ndarray,
+                              num_states: int, num_ensemble: int) -> bool:
+        """
+        Write ensemble state matrix to shared memory.
+
+        Args:
+            states: 2D array (num_states, num_ensemble)
+        """
+        if not self.config_written:
+            print("[WARNING] Config not written, writing it now...")
+            if not self.write_ensemble_config(num_states, num_ensemble):
+                return False
+
+        data_path = f"/dev/shm{self.SHM_ENSEMBLE_DATA_NAME}"
+
+        try:
+            # Dimension 검증
+            if states.shape != (num_states, num_ensemble):
+                raise ValueError(f"Shape mismatch: {states.shape} vs ({num_states}, {num_ensemble})")
+
+            # float32 변환
+            states_f32 = states.astype(np.float32, copy=False)
+
+            with open(data_path, 'wb') as f:
+                # 헤더 쓰기: status=0 (작성중)
+                header = struct.pack('<3i', 0, num_states, num_ensemble)
+                f.write(header)
+
+                # 데이터 쓰기 (C order = row-major)
+                data_bytes = states_f32.tobytes(order='C')
+                f.write(data_bytes)
+
+                # 헤더 업데이트: status=1 (완료)
+                f.seek(0)
+                header_ready = struct.pack('<3i', 1, num_states, num_ensemble)
+                f.write(header_ready)
+
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.chmod(data_path, 0o660)
+
+            # Memory Doctor 로깅
+            if memory_doctor.is_enabled():
+                iteration = getattr(self, 'current_iteration', 0)
+                memory_doctor.log_sent_data("ensemble_states", states, iteration,
+                                          f"Python->LDM {num_states}x{num_ensemble}")
+
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to write ensemble states: {e}")
+            return False
+```
+
+**편의 함수: write_ensemble_to_shm()**
+
+```python
+def write_ensemble_to_shm(states: np.ndarray, num_states: int,
+                          num_ensemble: int) -> bool:
+    """
+    간단한 인터페이스로 앙상블 상태 전송.
+    """
+    writer = EKIIPCWriter()
+
+    # 1. 설정 쓰기
+    if not writer.write_ensemble_config(num_states, num_ensemble):
+        return False
+
+    # 2. 데이터 쓰기
+    if not writer.write_ensemble_states(states, num_states, num_ensemble):
+        return False
+
+    return True
+```
+
+--------------------------------------------------------------------------------
+[2.3] eki_shm_config.py 핵심
+--------------------------------------------------------------------------------
+
+**목적:** 공유 메모리로부터 전체 설정 로드
+
+**핵심 함수: read_eki_full_config_shm()**
+
+```python
+def read_eki_full_config_shm() -> dict:
+    """
+    Read full EKI configuration (84 bytes).
+
+    Structure:
+    - Bytes 0-11  : Basic dimensions (12 bytes)
+    - Bytes 12-35 : Algorithm parameters (24 bytes: 1 int32 + 5 float32)
+    - Bytes 36-75 : Option strings (40 bytes = 5 × 8 bytes)
+    - Bytes 76-83 : Memory Doctor mode (8 bytes)
+
+    Returns:
+        Dictionary with all configuration parameters
+    """
+    config_path = "/dev/shm/ldm_eki_config"
+
+    with open(config_path, 'rb') as f:
+        data = f.read(84)
+        if len(data) < 84:
+            raise RuntimeError(f"Invalid config size: {len(data)} bytes")
+
+        # Basic info (12 bytes)
+        ensemble_size, num_receptors, num_timesteps = \
+            struct.unpack_from('<3i', data, 0)
+
+        # Algorithm parameters (24 bytes, offset 12)
+        offset = 12
+        iteration, = struct.unpack_from('<i', data, offset)
+        offset += 4
+        renkf_lambda, noise_level, time_interval, prior_constant, decay_constant = \
+            struct.unpack_from('<5f', data, offset)
+        offset += 20  # Now at 36
+
+        # Option strings (40 bytes, offset 36)
+        perturb_option = data[36:44].decode('utf-8').rstrip('\x00')
+        adaptive_eki = data[44:52].decode('utf-8').rstrip('\x00')
+        localized_eki = data[52:60].decode('utf-8').rstrip('\x00')
+        regularization = data[60:68].decode('utf-8').rstrip('\x00')
+        time_unit = data[68:76].decode('utf-8').rstrip('\x00')
+
+        # Memory Doctor Mode (8 bytes, offset 76)
+        memory_doctor = data[76:84].decode('utf-8').rstrip('\x00')
+
+        config_dict = {
+            # Basic
+            'ensemble_size': ensemble_size,
+            'num_receptors': num_receptors,
+            'num_timesteps': num_timesteps,
+
+            # Algorithm
+            'iteration': iteration,
+            'renkf_lambda': renkf_lambda,
+            'noise_level': noise_level,
+            'time_interval': time_interval,
+            'prior_constant': prior_constant,
+            'decay_constant': decay_constant,
+
+            # Options
+            'perturb_option': perturb_option,
+            'adaptive_eki': adaptive_eki,
+            'localized_eki': localized_eki,
+            'regularization': regularization,
+            'time_unit': time_unit,
+            'memory_doctor': memory_doctor,
+
+            # Hardcoded (v1.0)
+            'GPU_ForwardPhysicsModel': 'On',
+            'GPU_InverseModel': 'On',
+            'nGPU': 1,
+            'Source_location': 'Fixed',
+            'nsource': 1,
+        }
+
+        return config_dict
+```
+
+**True Emissions 읽기: read_true_emissions_shm()**
+
+```python
+def read_true_emissions_shm() -> np.ndarray:
+    """
+    Read true emission time series from shared memory.
+
+    Shared memory: /dev/shm/ldm_eki_true_emissions
+
+    Returns:
+        1D array of emissions [Bq] for each timestep
+    """
+    emissions_path = "/dev/shm/ldm_eki_true_emissions"
+
+    with open(emissions_path, 'rb') as f:
+        data = f.read()
+
+        if len(data) % 4 != 0:
+            raise RuntimeError(f"Invalid size: {len(data)} bytes (not multiple of 4)")
+
+        emissions = np.frombuffer(data, dtype=np.float32)
+
+        # Memory Doctor 로깅
+        if memory_doctor.is_enabled():
+            memory_doctor.log_received_data("true_emissions", emissions, 0,
+                                           f"LDM->Python (length={len(emissions)})")
+
+        return emissions
+```
+
+**설정 로드 래퍼: load_config_from_shared_memory()**
+
+```python
+def load_config_from_shared_memory():
+    """
+    Load full configuration and construct input_config/input_data dictionaries.
+
+    Returns:
+        (input_config, input_data) compatible with EKI optimizer
+    """
+    print("[ENSEMBLE] Loading configuration from shared memory...")
+
+    # 1. Full config 읽기
+    shm_data = read_eki_full_config_shm()
+
+    # 2. True emissions 읽기
+    true_emissions = read_true_emissions_shm()
+    print(f"[IPC] True emissions loaded: {len(true_emissions)} timesteps")
+
+    # 3. Memory Doctor 활성화
+    memory_doctor_value = shm_data['memory_doctor'].strip()
+    if memory_doctor_value.lower() in ['on', '1', 'true']:
+        memory_doctor.set_enabled(True)
+        print("[DEBUG] Memory Doctor Mode enabled")
+    else:
+        memory_doctor.set_enabled(False)
+
+    # 4. input_config 구성
+    input_config = {
+        'sample_ctrl': shm_data['ensemble_size'],
+        'iteration': shm_data['iteration'],
+        'Optimizer_order': ['EKI'],
+
+        # EKI options
+        'perturb_option': shm_data['perturb_option'],
+        'Adaptive_EKI': shm_data['adaptive_eki'],
+        'Localized_EKI': 'Off',  # HARD-CODED for v1.0 (see LOCALIZED_DISABLED.md)
+        'Regularization': shm_data['regularization'],
+        'REnKF_lambda': shm_data['renkf_lambda'],
+
+        # GPU
+        'GPU_ForwardPhysicsModel': 'On',
+        'GPU_InverseModel': 'On',
+        'nGPU': 1,
+    }
+
+    # 5. input_data 구성
+    input_data = {
+        # Time
+        'time_interval': shm_data['time_interval'],
+        'inverse_time_interval': shm_data['time_interval'] / 60.0,
+
+        # Receptor
+        'nreceptor': shm_data['num_receptors'],
+        'receptor_position': [[1000.0 * (i+1), 1000.0 * (i+1), 1.0]
+                             for i in range(shm_data['num_receptors'])],
+
+        # Source
+        'Source_location': 'Fixed',
+        'nsource': 1,
+        'num_state_timesteps': shm_data['num_timesteps'],
+        'source_name': [f'Kr-88-{i+1}' for i in range(shm_data['num_timesteps'])],
+
+        # Source_1 (true emission)
+        'Source_1': [
+            shm_data['decay_constant'],  # λ [s⁻¹]
+            1.02e-13,                     # DCF (unused)
+            [10.0, 10.0, 10.0],           # Location (unused)
+            true_emissions.tolist(),      # True emissions
+            0.0, 0.0,
+            'Kr-88'
+        ],
+
+        # Prior_Source_1 (initial guess)
+        'Prior_Source_1': [
+            shm_data['decay_constant'],
+            1.02e-13,
+            [[10.0, 10.0, 100.0], [0.1]],
+            [[shm_data['prior_constant']] * shm_data['num_timesteps'],
+             [shm_data['noise_level']]],
+            'Kr-88'
+        ],
+
+        # Bounds
+        'prior_source1': [1.0e+14, 1.0e+13, shm_data['decay_constant']],
+        'real_source1_boundary': [0.0, 1.0e+14],
+    }
+
+    print("✓ Configuration loaded:")
+    print(f"  Ensemble size : {input_config['sample_ctrl']}")
+    print(f"  Iterations    : {input_config['iteration']}")
+    print(f"  Receptors     : {input_data['nreceptor']}")
+
+    return input_config, input_data
+```
+
+================================================================================
+[3. 통신 프로토콜 요약]
+================================================================================
+
+[3.1] 3단계 통신 시퀀스
+--------------------------------------------------------------------------------
+
+**Stage 0: 초기화**
+```
+[C++]
+1. 전체 설정을 공유 메모리에 쓰기
+   - /dev/shm/ldm_eki_config (84 bytes)
+   - /dev/shm/ldm_eki_true_emissions (num_timesteps × 4 bytes)
+
+2. 초기 참값 시뮬레이션 실행 (단일 모드)
+
+3. 초기 관측값 쓰기
+   - /dev/shm/ldm_eki_data (헤더 + receptors × timesteps × 4 bytes)
+
+4. Python EKI 백그라운드 실행
+
+[Python]
+5. 설정 읽기 (load_config_from_shared_memory)
+
+6. 초기 관측값 읽기 (receive_gamma_dose_matrix_shm)
+
+7. 사전 앙상블 생성 (Prior_Source_1 기반)
+```
+
+**Stage 1: 앙상블 상태 전송 (Python → C++)**
+```
+[Python]
+1. 앙상블 상태 최적화 (EKI 알고리즘)
+   - Shape: (num_states, num_ensemble) = (24, 100)
+   - Column-major (NumPy)
+
+2. Row-major로 변환하여 공유 메모리에 쓰기
+   - /dev/shm/ldm_eki_ensemble_config (12 bytes)
+   - /dev/shm/ldm_eki_ensemble_data (헤더 + states × ensembles × 4 bytes)
+   - status=1 설정 (쓰기 완료)
+
+[C++]
+3. waitForEnsembleData() - 신선도 검증
+   - timestep_id 체크 (last_iteration_id < current_iteration_id)
+   - status=1 체크
+
+4. readEnsembleStates() - 데이터 읽기
+   - Row-major로 읽기
+   - std::vector<float>로 복사
+```
+
+**Stage 2: 앙상블 시뮬레이션 (C++)**
+```
+[C++]
+1. 앙상블 상태로 입자 초기화
+   - 각 앙상블 멤버마다 독립적인 emission 값
+
+2. 앙상블 시뮬레이션 병렬 실행
+   - 100개 앙상블 × 24 timesteps
+
+3. 수용체에서 관측값 수집
+   - Shape: [ensemble][timestep][receptor]
+```
+
+**Stage 3: 앙상블 관측값 전송 (C++ → Python)**
+```
+[C++]
+1. 앙상블 관측값 쓰기
+   - /dev/shm/ldm_eki_ensemble_obs_config (12 bytes)
+   - /dev/shm/ldm_eki_ensemble_obs_data (ensemble × timesteps × receptors × 4 bytes)
+   - Row-major 순서
+
+[Python]
+2. receive_ensemble_observations_shm() - 관측값 읽기
+   - Row-major로 읽기
+   - Reshape: (ensemble, timesteps, receptors)
+
+3. EKI 업데이트
+   - 칼만 이득 계산
+   - 앙상블 상태 업데이트
+
+4. Stage 1로 돌아가기 (반복)
+```
+
+--------------------------------------------------------------------------------
+[3.2] Row/Column Major 변환 예제
+--------------------------------------------------------------------------------
+
+**문제:**
+Python은 Column-major (NumPy default for mathematical operations),
+C++는 Row-major를 사용. 공유 메모리에서 혼동 없이 데이터를 전달하려면?
+
+**해결책:**
+공유 메모리에는 **항상 Row-major 순서로 평탄화**하여 저장.
+
+**예제 1: Python → C++ (앙상블 상태)**
+
+```python
+# Python 측 (eki_ipc_writer.py)
+
+# 앙상블 상태: (num_states, num_ensemble) = (3, 2)
+states = np.array([
+    [1.0, 2.0],  # State 0 for Ens0, Ens1
+    [3.0, 4.0],  # State 1 for Ens0, Ens1
+    [5.0, 6.0],  # State 2 for Ens0, Ens1
+], dtype=np.float32)
+
+# Row-major로 평탄화
+data_bytes = states.tobytes(order='C')  # 'C' = row-major
+
+# 메모리 레이아웃:
+# [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+#  ^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^
+#  State 0      State 1      State 2
+#  (Ens0, Ens1) (Ens0, Ens1) (Ens0, Ens1)
+
+# C++ 측 (ldm_eki_reader.cu)
+# flat_array를 읽어서 C++에서 접근:
+# float flat_array[6] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+#
+# To access: state[s][e] = flat_array[s * num_ensemble + e]
+# state[0][0] = flat_array[0 * 2 + 0] = flat_array[0] = 1.0
+# state[0][1] = flat_array[0 * 2 + 1] = flat_array[1] = 2.0
+# state[1][0] = flat_array[1 * 2 + 0] = flat_array[2] = 3.0
+# state[2][1] = flat_array[2 * 2 + 1] = flat_array[5] = 6.0
+```
+
+**예제 2: C++ → Python (앙상블 관측값)**
+
+```cpp
+// C++ 측 (ldm_eki_writer.cu)
+
+// 앙상블 관측값: [ensemble][timestep][receptor]
+// ensemble=2, timesteps=3, receptors=2
+
+float observations[2][3][2] = {
+    // Ensemble 0
+    {
+        {10.0, 20.0},  // T0: R0, R1
+        {30.0, 40.0},  // T1: R0, R1
+        {50.0, 60.0},  // T2: R0, R1
+    },
+    // Ensemble 1
+    {
+        {11.0, 21.0},  // T0: R0, R1
+        {31.0, 41.0},  // T1: R0, R1
+        {51.0, 61.0},  // T2: R0, R1
+    },
+};
+
+// 평탄화 (row-major는 C++의 기본)
+// [10.0, 20.0, 30.0, 40.0, 50.0, 60.0,  <- Ensemble 0
+//  11.0, 21.0, 31.0, 41.0, 51.0, 61.0]  <- Ensemble 1
+
+// 공유 메모리에 쓰기
+std::memcpy(shm_ptr, observations, 2 * 3 * 2 * sizeof(float));
+```
+
+```python
+# Python 측 (eki_ipc_reader.py)
+
+# 공유 메모리 읽기
+flat_array = np.frombuffer(shm_data, dtype=np.float32)
+# flat_array = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+#               11.0, 21.0, 31.0, 41.0, 51.0, 61.0]
+
+# Row-major로 reshape
+observations = flat_array.reshape(2, 3, 2, order='C')
+
+# 결과:
+# observations[0, :, :] = [[10.0, 20.0],  <- Ens 0, T0
+#                          [30.0, 40.0],  <- Ens 0, T1
+#                          [50.0, 60.0]]  <- Ens 0, T2
+#
+# observations[1, :, :] = [[11.0, 21.0],  <- Ens 1, T0
+#                          [31.0, 41.0],  <- Ens 1, T1
+#                          [51.0, 61.0]]  <- Ens 1, T2
+```
+
+**핵심 규칙:**
+
+1. **Python에서 쓸 때:**
+   ```python
+   data_bytes = array.tobytes(order='C')  # Row-major
+   ```
+
+2. **Python에서 읽을 때:**
+   ```python
+   array = np.frombuffer(data, dtype=np.float32)
+   array = array.reshape(shape, order='C')  # Row-major
+   ```
+
+3. **C++에서 쓸 때:**
+   ```cpp
+   std::memcpy(shm_ptr, array, size);  // 기본이 row-major
+   ```
+
+4. **C++에서 읽을 때:**
+   ```cpp
+   std::memcpy(array, shm_ptr, size);  // 기본이 row-major
+   ```
+
+5. **절대 섞지 말 것:**
+   - Python에서 `order='F'` (column-major) 사용하면 C++에서 잘못 읽힘
+   - 공유 메모리에는 **항상 row-major**
+
+================================================================================
+[요약]
+================================================================================
+
+**C++ EKIReader 핵심:**
+1. waitForEnsembleData(): 신선도 검증 (timestep_id)
+2. readEnsembleStates(): 데이터 읽기 및 검증
+
+**Python IPC 모듈 핵심:**
+1. eki_ipc_reader.py: C++로부터 관측값 읽기
+2. eki_ipc_writer.py: C++로 앙상블 상태 쓰기
+3. eki_shm_config.py: 전체 설정 로드
+
+**통신 프로토콜:**
+1. 3단계 시퀀스: 초기화 → 앙상블 전송 → 관측값 수신
+2. Row/Column major 변환: 공유 메모리는 항상 row-major
+
+**성능:**
+- 읽기/쓰기: < 1ms (10-100 KB)
+- 폴링: 1초 간격 (CPU ~0.01%)
+- Memory Doctor: 자동 로깅
+
+================================================================================
+[다음 문서]
+================================================================================
+
+Part 3: Memory Doctor 및 디버깅 시스템
+- Memory Doctor 전체 아키텍처
+- 로깅 포맷
+- 상태 추적
+- 진단 도구
+
+================================================================================
+[END OF PART 2]
+================================================================================

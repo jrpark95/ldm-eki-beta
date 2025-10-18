@@ -75,7 +75,7 @@ def load_config_from_shared_memory():
         'REnKF_regularization': 'regularization.py',
         'Adaptive_EKI': shm_data['adaptive_eki'],
 
-        # ⚠️  HARD-CODED TO 'Off' FOR v1.0 DEPLOYMENT
+        # HARD-CODED TO 'Off' FOR v1.0 DEPLOYMENT
         # The LOCALIZED option is disabled for this release due to concerns about
         # physical correctness. This is the only allowed hard-coding exception.
         # Future releases will re-enable this after additional validation.

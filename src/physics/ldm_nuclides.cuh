@@ -26,10 +26,10 @@
  * ## Nuclide Properties
  *
  * Each nuclide is characterized by:
- * - **Name**: Isotope identifier (e.g., "Cs-137", "I-131")
- * - **Half-life**: Time for 50% decay (hours)
- * - **Decay constant**: λ = ln(2) / t½ (s⁻¹)
- * - **Initial ratio**: Normalized initial concentration (Σ ratios = 1.0)
+ * - Name: Isotope identifier (e.g., "Cs-137", "I-131")
+ * - Half-life: Time for 50% decay (hours)
+ * - Decay constant: λ = ln(2) / t½ (s⁻¹)
+ * - Initial ratio: Normalized initial concentration (Σ ratios = 1.0)
  *
  * ## Decay Constant Calculation
  *
@@ -75,9 +75,9 @@ __constant__ float d_decay_constants[MAX_NUCLIDES];
  *
  * ## Physical Interpretation
  *
- * - **Half-life**: Time for activity to drop to 50% of initial value
- * - **Decay constant**: Exponential decay rate (λ = ln(2)/t½)
- * - **Initial ratio**: Fraction of total activity from this nuclide
+ * - Half-life: Time for activity to drop to 50% of initial value
+ * - Decay constant: Exponential decay rate (λ = ln(2)/t½)
+ * - Initial ratio: Fraction of total activity from this nuclide
  *
  * ## Example Values (Common Isotopes)
  *
@@ -107,11 +107,11 @@ struct NuclideInfo {
  *
  * ## Features
  *
- * - **Singleton access**: Single global instance via getInstance()
- * - **CSV loading**: Parse nuclide config files (name, λ, ratio)
- * - **Automatic normalization**: Initial ratios summed to 1.0
- * - **GPU memory management**: Upload decay constants to device
- * - **Constant memory fallback**: Tries __constant__, falls back to global
+ * - Singleton access: Single global instance via getInstance()
+ * - CSV loading: Parse nuclide config files (name, λ, ratio)
+ * - Automatic normalization: Initial ratios summed to 1.0
+ * - GPU memory management: Upload decay constants to device
+ * - Constant memory fallback: Tries __constant__, falls back to global
  *
  * ## Design Rationale
  *
@@ -142,10 +142,10 @@ struct NuclideInfo {
  *
  * ## Memory Lifecycle
  *
- * - **Creation**: First call to getInstance() allocates singleton
- * - **Loading**: loadFromFile() allocates device memory
- * - **Destruction**: ~NuclideConfig() frees device memory
- * - **Cleanup**: Automatic at program exit
+ * - Creation: First call to getInstance() allocates singleton
+ * - Loading: loadFromFile() allocates device memory
+ * - Destruction: ~NuclideConfig() frees device memory
+ * - Cleanup: Automatic at program exit
  *
  * @note Thread-safe for single-threaded initialization (no mutex)
  * @note Device memory freed automatically in destructor

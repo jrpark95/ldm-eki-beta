@@ -1,0 +1,1957 @@
+=============================================================================
+LDM-EKI 시각화 및 후처리 도구 종합 보고서 - PART 2 of 3
+=============================================================================
+
+생성 날짜: 2025-10-18
+작성자: Claude Code Agent
+범위: detailed_postprocess.py, visualize_vtk.py 완전 분석
+
+목차:
+    Part 1: compare_all_receptors.py 완전 분석 (1,000줄)
+  → Part 2: detailed_postprocess.py, visualize_vtk.py 완전 분석 (1,000줄)
+    Part 3: C++ VTK 출력, 디버깅 도구, 통합 및 자동화 (1,000줄)
+
+=============================================================================
+1. DETAILED_POSTPROCESS.PY 완전 분석
+=============================================================================
+
+1.1 개요 및 목적
+-----------------------------------------------------------------------------
+
+**파일 위치**: util/detailed_postprocess.py
+**총 라인 수**: 474줄
+**주요 목적**: EKI 시뮬레이션 종료 후 선택적 상세 분석 제공
+
+**핵심 기능**:
+1. NPZ 디버그 데이터 텍스트 추출
+2. 개별 수용체 플롯 생성
+3. 입력 설정 파일 요약
+4. 최종 종합 보고서 생성
+
+**설계 철학**:
+- 자동 실행 아님 (사용자가 필요시에만 실행)
+- compare_all_receptors.py 함수 재사용 (코드 중복 최소화)
+- 텍스트 기반 데이터 추출 (Excel 등 외부 도구 불필요)
+- Markdown 형식 보고서 (가독성 최적화)
+
+**실행 방법**:
+```bash
+python3 util/detailed_postprocess.py
+```
+
+**출력 디렉토리 구조**:
+```
+output/results/detailed/
+├── debug_data/          # NPZ 데이터 텍스트 추출
+│   ├── prior_state.txt
+│   ├── initial_observation.txt
+│   ├── iteration_0_state.txt
+│   └── ...
+├── plots/               # 개별 수용체 플롯
+│   ├── R1_particles.png
+│   ├── R1_dose.png
+│   ├── R2_particles.png
+│   ├── R2_dose.png
+│   └── emission_estimates.png
+├── config/              # 설정 요약
+│   └── input_summary.md
+└── README.md            # 종합 보고서
+```
+
+1.2 핵심 함수 분석
+-----------------------------------------------------------------------------
+
+1.2.1 ensure_output_dir(subdir='detailed')
+-------------------------------------------
+
+**목적**: 출력 디렉토리 구조 생성
+
+**소스 코드** (52-61줄):
+```python
+def ensure_output_dir(subdir='detailed'):
+    """Create output directory structure"""
+    base_dir = os.path.join('output', 'results', subdir)
+    subdirs = ['debug_data', 'plots', 'config']
+
+    for sd in subdirs:
+        path = os.path.join(base_dir, sd)
+        os.makedirs(path, exist_ok=True)
+
+    return base_dir
+```
+
+**생성되는 경로**:
+- output/results/detailed/
+- output/results/detailed/debug_data/
+- output/results/detailed/plots/
+- output/results/detailed/config/
+
+**특징**:
+- os.makedirs(exist_ok=True): 기존 디렉토리가 있어도 에러 없음
+- 상대 경로 사용: 프로젝트 루트에서 실행 가정
+- base_dir 반환: 이후 함수들에서 재사용
+
+1.2.2 extract_debug_data(output_dir)
+-------------------------------------------
+
+**목적**: logs/debug/eki_debug_data.npz에서 모든 배열 텍스트로 추출
+
+**소스 코드** (64-100줄):
+```python
+def extract_debug_data(output_dir):
+    """Extract and save debug data from npz archive (text only)"""
+    print("\n" + "="*70)
+    print("EXTRACTING DEBUG DATA")
+    print("="*70)
+
+    data = load_debug_data()  # From eki_debug_logger.py
+
+    if not data:
+        print("⚠️  No debug data found in logs/debug/eki_debug_data.npz")
+        return None
+
+    debug_dir = os.path.join(output_dir, 'debug_data')
+
+    for key, arr in data.items():
+        print(f"\n📦 Processing: {key}")
+        print(f"   Shape: {arr.shape}, dtype: {arr.dtype}")
+
+        # Save as text only (first 100 values for large arrays)
+        txt_path = os.path.join(debug_dir, f'{key}.txt')
+        with open(txt_path, 'w') as f:
+            f.write(f"Array: {key}\n")
+            f.write(f"Shape: {arr.shape}\n")
+            f.write(f"dtype: {arr.dtype}\n")
+            f.write(f"Min: {arr.min():.6e}\n")
+            f.write(f"Max: {arr.max():.6e}\n")
+            f.write(f"Mean: {arr.mean():.6e}\n")
+            f.write(f"Std: {arr.std():.6e}\n")
+            f.write(f"\nData (first 100 values):\n")
+            flat = arr.flatten()
+            for i, val in enumerate(flat[:100]):
+                f.write(f"{i:6d}: {val:.12e}\n")
+            if len(flat) > 100:
+                f.write(f"\n... ({len(flat) - 100} more values)\n")
+        print(f"   ✓ Saved: {txt_path}")
+
+    return data
+```
+
+**저장 형식 예시**:
+```
+Array: prior_state
+Shape: (24, 100)
+dtype: float64
+Min: 1.000000e+08
+Max: 2.000000e+08
+Mean: 1.500000e+08
+Std: 3.162278e+07
+
+Data (first 100 values):
+     0: 1.500000000000e+08
+     1: 1.450000000000e+08
+     2: 1.600000000000e+08
+     ...
+    99: 1.550000000000e+08
+
+... (2300 more values)
+```
+
+**통계 정보**:
+- Min/Max: 데이터 범위 파악
+- Mean: 평균값 (물리적 타당성 검증)
+- Std: 표준편차 (앙상블 다양성 확인)
+
+**첫 100개 값만 출력하는 이유**:
+- 대용량 배열 (24×100 = 2400개 값) 전체 출력 시 파일 크기 과다
+- 100개 값으로 데이터 패턴/이상치 확인 가능
+- 필요시 원본 NPZ 파일에서 전체 데이터 로드 가능
+
+**load_debug_data() 함수**:
+- src/eki/eki_debug_logger.py에서 import
+- NPZ 아카이브에서 모든 배열을 딕셔너리로 로드
+- 구현 (eki_debug_logger.py):
+```python
+def load_debug_data():
+    """Load debug data from NPZ archive"""
+    npz_path = 'logs/debug/eki_debug_data.npz'
+    if os.path.exists(npz_path):
+        return dict(np.load(npz_path))
+    else:
+        return {}
+```
+
+1.2.3 parse_config_value(line)
+-------------------------------------------
+
+**목적**: 설정 파일에서 키-값 쌍 파싱 (다양한 형식 지원)
+
+**소스 코드** (103-109줄):
+```python
+def parse_config_value(line):
+    """Parse configuration value from line"""
+    if ':' in line:
+        return line.split(':', 1)[1].strip()
+    elif '=' in line:
+        return line.split('=', 1)[1][1].strip()
+    return line.strip()
+```
+
+**지원 형식**:
+1. 콜론 구분: `KEY: value`
+2. 등호 구분: `KEY = value` 또는 `KEY=value`
+3. 값만: `value` (키 없는 라인)
+
+**사용 예시**:
+```python
+parse_config_value("EKI_TIME_INTERVAL: 15")      # → "15"
+parse_config_value("ENSEMBLE_SIZE = 100")         # → "100"
+parse_config_value("On")                          # → "On"
+```
+
+**split(':', 1) 설명**:
+- maxsplit=1: 첫 번째 구분자만 분할
+- 값 안에 ':'가 있어도 안전
+- 예: `PATH: /usr/local:bin` → `"/usr/local:bin"`
+
+1.2.4 create_config_summary(output_dir)
+-------------------------------------------
+
+**목적**: 모든 입력 설정 파일에서 핵심 값만 추출하여 Markdown 요약 생성
+
+**소스 코드** (112-224줄):
+```python
+def create_config_summary(output_dir):
+    """Create clean configuration summary"""
+    print("\n" + "="*70)
+    print("GENERATING CONFIGURATION SUMMARY")
+    print("="*70)
+
+    config_dir = os.path.join(output_dir, 'config')
+    summary_path = os.path.join(config_dir, 'input_summary.md')
+
+    with open(summary_path, 'w') as f:
+        f.write(f"# LDM-EKI Input Configuration Summary\n\n")
+        f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("---\n\n")
+
+        # EKI Settings (128-145줄)
+        f.write("## EKI Configuration\n\n")
+        try:
+            with open('input/eki.conf', 'r') as cfg:
+                for line in cfg:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if 'EKI_TIME_INTERVAL' in line:
+                        f.write(f"- **Time Interval:** {parse_config_value(line)} minutes\n")
+                    elif 'ENSEMBLE_SIZE' in line:
+                        f.write(f"- **Ensemble Size:** {parse_config_value(line)}\n")
+                    elif 'ITERATION' in line and 'MAX' in line:
+                        f.write(f"- **Max Iterations:** {parse_config_value(line)}\n")
+                    elif 'ADAPTIVE' in line:
+                        f.write(f"- **Adaptive:** {parse_config_value(line)}\n")
+                    elif 'LOCALIZED' in line:
+                        f.write(f"- **Localized:** {parse_config_value(line)}\n")
+        except:
+            f.write("*EKI configuration not found*\n")
+
+        # Receptor Settings (148-174줄)
+        f.write("\n## Receptor Configuration\n\n")
+        try:
+            with open('input/receptor.conf', 'r') as cfg:
+                for line in cfg:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if 'NUM_RECEPTORS' in line:
+                        f.write(f"- **Number of Receptors:** {parse_config_value(line)}\n")
+                        break
+            # Read receptor locations
+            f.write("- **Receptor Locations:**\n")
+            with open('input/receptor.conf', 'r') as cfg:
+                in_locations = False
+                for line in cfg:
+                    line = line.strip()
+                    if 'RECEPTOR_LOCATIONS' in line:
+                        in_locations = True
+                        continue
+                    if in_locations and line and not line.startswith('#'):
+                        if '=' in line:
+                            break
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            f.write(f"  - Lat: {parts[0]}, Lon: {parts[1]}\n")
+        except:
+            f.write("*Receptor configuration not found*\n")
+
+        # Source Settings (177-189줄)
+        f.write("\n## Source Configuration\n\n")
+        try:
+            with open('input/source.conf', 'r') as cfg:
+                for line in cfg:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if 'SOURCE_LOCATION' in line:
+                        parts = parse_config_value(line).split()
+                        if len(parts) >= 3:
+                            f.write(f"- **Source Location:** Lat={parts[0]}, Lon={parts[1]}, Alt={parts[2]}m\n")
+        except:
+            f.write("*Source configuration not found*\n")
+
+        # Nuclide Settings (192-204줄)
+        f.write("\n## Nuclide Configuration\n\n")
+        try:
+            with open('input/nuclides.conf', 'r') as cfg:
+                for line in cfg:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if 'PRIMARY_NUCLIDE' in line:
+                        f.write(f"- **Primary Nuclide:** {parse_config_value(line)}\n")
+                    elif 'DECAY_CONSTANT' in line:
+                        f.write(f"- **Decay Constant:** {parse_config_value(line)} s⁻¹\n")
+        except:
+            f.write("*Nuclide configuration not found*\n")
+
+        # Simulation Settings (207-221줄)
+        f.write("\n## Simulation Settings\n\n")
+        try:
+            with open('input/setting.txt', 'r') as cfg:
+                for line in cfg:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if 'Time_end' in line:
+                        f.write(f"- **Simulation Duration:** {parse_config_value(line)} seconds\n")
+                    elif 'dt' in line and 'Time' not in line:
+                        f.write(f"- **Time Step:** {parse_config_value(line)} seconds\n")
+                    elif 'Number_of_particles' in line:
+                        f.write(f"- **Particles:** {parse_config_value(line)}\n")
+        except:
+            f.write("*Simulation settings not found*\n")
+
+    print(f"✓ Configuration summary: {summary_path}")
+    return summary_path
+```
+
+**생성되는 Markdown 예시**:
+```markdown
+# LDM-EKI Input Configuration Summary
+
+**Generated:** 2025-10-18 14:35:20
+
+---
+
+## EKI Configuration
+
+- **Time Interval:** 15 minutes
+- **Ensemble Size:** 100
+- **Max Iterations:** 10
+- **Adaptive:** On
+- **Localized:** Off
+
+## Receptor Configuration
+
+- **Number of Receptors:** 16
+- **Receptor Locations:**
+  - Lat: 35.5, Lon: 129.3
+  - Lat: 35.5, Lon: 129.4
+  - ...
+
+## Source Configuration
+
+- **Source Location:** Lat=35.71, Lon=129.48, Alt=10m
+
+## Nuclide Configuration
+
+- **Primary Nuclide:** Cs-137
+- **Decay Constant:** 7.3e-10 s⁻¹
+
+## Simulation Settings
+
+- **Simulation Duration:** 21600 seconds
+- **Time Step:** 100 seconds
+- **Particles:** 100000
+```
+
+**특징**:
+- 모든 설정 파일 자동 스캔
+- 주석 및 빈 줄 무시
+- 파일 없을 시 graceful fallback (*not found* 메시지)
+- Markdown 형식 (GitHub, VS Code 등에서 바로 읽기 가능)
+
+1.2.5 generate_individual_plots(output_dir)
+-------------------------------------------
+
+**목적**: compare_all_receptors.py 함수 재사용하여 개별 플롯 생성
+
+**소스 코드** (227-373줄):
+```python
+def generate_individual_plots(output_dir):
+    """Generate individual plots from original data (same as compare_all_receptors.py)"""
+    print("\n" + "="*70)
+    print("GENERATING INDIVIDUAL PLOTS FROM DATA")
+    print("="*70)
+
+    # Import functions from compare_all_receptors
+    sys.path.insert(0, 'util')
+    from compare_all_receptors import (
+        load_eki_settings,
+        parse_single_particle_counts,
+        parse_ensemble_particle_counts,
+        load_ensemble_doses_from_shm,
+        load_eki_iterations,
+        load_true_emissions,
+        plot_emission_estimates
+    )
+
+    plots_dir = os.path.join(output_dir, 'plots')
+
+    # Load settings
+    eki_settings = load_eki_settings()
+    num_receptors = eki_settings['num_receptors']
+    num_timesteps = eki_settings['num_timesteps']
+    time_interval = eki_settings['time_interval']
+
+    print(f"Configuration: {num_receptors} receptors, {num_timesteps} timesteps, {time_interval}min interval")
+
+    # Load data (256-260줄)
+    single_data = parse_single_particle_counts(num_receptors=num_receptors)
+    ensemble_particle_data = parse_ensemble_particle_counts(num_receptors=num_receptors)
+    ensemble_doses = load_ensemble_doses_from_shm()
+    eki_iterations = load_eki_iterations()
+    true_emissions = load_true_emissions()
+
+    # Prepare arrays (263-275줄)
+    times = np.arange(1, num_timesteps + 1) * time_interval
+    single_counts = [np.zeros(num_timesteps) for _ in range(num_receptors)]
+    single_doses = [np.zeros(num_timesteps) for _ in range(num_receptors)]
+
+    # Fill single mode data
+    if single_data:
+        for i, obs in enumerate(single_data[:num_timesteps]):
+            for r in range(num_receptors):
+                receptor_key = f'R{r+1}'
+                if f'{receptor_key}_count' in obs:
+                    single_counts[r][i] = obs[f'{receptor_key}_count']
+                if f'{receptor_key}_dose' in obs:
+                    single_doses[r][i] = obs[f'{receptor_key}_dose']
+
+    # Process ensemble dose data (278-283줄)
+    if ensemble_doses is not None:
+        ens_dose_mean = ensemble_doses.mean(axis=0)
+        ens_dose_std = ensemble_doses.std(axis=0)
+    else:
+        ens_dose_mean = np.zeros((num_receptors, num_timesteps))
+        ens_dose_std = np.zeros((num_receptors, num_timesteps))
+
+    # Process ensemble particle data (286-295줄)
+    ens_counts_mean = [np.zeros(num_timesteps) for _ in range(num_receptors)]
+    ens_counts_std = [np.zeros(num_timesteps) for _ in range(num_receptors)]
+
+    for obs_idx, data in ensemble_particle_data.items():
+        if obs_idx < num_timesteps:
+            for r in range(num_receptors):
+                receptor_key = f'R{r+1}'
+                if f'{receptor_key}_count' in data and data[f'{receptor_key}_count']:
+                    ens_counts_mean[r][obs_idx] = np.mean(data[f'{receptor_key}_count'])
+                    ens_counts_std[r][obs_idx] = np.std(data[f'{receptor_key}_count'])
+
+    # Colors (298-299줄)
+    single_color = '#2E86C1'
+    ensemble_color = '#E74C3C'
+
+    # Receptor titles (302-308줄)
+    receptor_titles = []
+    for i in range(num_receptors):
+        if i < len(eki_settings['receptor_locations']):
+            lat, lon = eki_settings['receptor_locations'][i]
+            receptor_titles.append(f'R{i+1} ({lat:.1f}, {lon:.1f})')
+        else:
+            receptor_titles.append(f'R{i+1}')
+
+    plot_count = 0
+
+    # Generate individual particle plots (313-334줄)
+    for r in range(num_receptors):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(times, single_counts[r], 'o-', color=single_color,
+                linewidth=2, markersize=5, label='Single Mode', alpha=0.9)
+        ax.plot(times, ens_counts_mean[r], 's--', color=ensemble_color,
+                linewidth=2, markersize=4, label='Ensemble Mean', alpha=0.9)
+        ax.fill_between(times,
+                        ens_counts_mean[r] - ens_counts_std[r],
+                        ens_counts_mean[r] + ens_counts_std[r],
+                        color=ensemble_color, alpha=0.2)
+        ax.set_xlabel('Time (minutes)', fontsize=11)
+        ax.set_ylabel('Particle Count', fontsize=11)
+        ax.set_title(f'{receptor_titles[r]} PARTICLES', fontsize=12, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+        plot_path = os.path.join(plots_dir, f'R{r+1}_particles.png')
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f"✓ R{r+1} particles: {plot_path}")
+        plot_count += 1
+
+    # Generate individual dose plots (337-359줄)
+    for r in range(num_receptors):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(times, single_doses[r], 'o-', color=single_color,
+                linewidth=2, markersize=5, label='Single Mode', alpha=0.9)
+        ax.plot(times, ens_dose_mean[r], 's--', color=ensemble_color,
+                linewidth=2, markersize=4, label='Ensemble Mean', alpha=0.9)
+        ax.fill_between(times,
+                        ens_dose_mean[r] - ens_dose_std[r],
+                        ens_dose_mean[r] + ens_dose_std[r],
+                        color=ensemble_color, alpha=0.2)
+        ax.set_xlabel('Time (minutes)', fontsize=11)
+        ax.set_ylabel('Dose (Sv)', fontsize=11)
+        ax.set_yscale('log')
+        ax.set_title(f'{receptor_titles[r]} DOSE (log scale)', fontsize=12, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3, which='both')
+
+        plot_path = os.path.join(plots_dir, f'R{r+1}_dose.png')
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f"✓ R{r+1} dose: {plot_path}")
+        plot_count += 1
+
+    # Generate emission estimates plot (362-370줄)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_emission_estimates(ax, eki_iterations, true_emissions, num_timesteps, time_interval)
+
+    plot_path = os.path.join(plots_dir, 'emission_estimates.png')
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"✓ Emission estimates: {plot_path}")
+    plot_count += 1
+
+    print(f"\n✓ Total plots generated: {plot_count}")
+```
+
+**생성되는 플롯** (16 수용체 기준):
+1. R1_particles.png ~ R16_particles.png (16개)
+2. R1_dose.png ~ R16_dose.png (16개)
+3. emission_estimates.png (1개)
+- **총 33개 플롯**
+
+**compare_all_receptors.py 재사용 이유**:
+- 코드 중복 방지 (DRY 원칙)
+- 동일한 데이터 로딩/파싱 로직 사용
+- 시각화 스타일 일관성 유지
+- 버그 수정 시 한 곳만 수정하면 됨
+
+**개별 플롯 vs 통합 플롯 차이**:
+- 통합 플롯 (compare_all_receptors.py): 3×3 그리드, 여러 수용체 동시 비교
+- 개별 플롯 (detailed_postprocess.py): 수용체당 1개 파일, 상세 분석 용이
+
+**해상도 차이**:
+- 통합 플롯: dpi=150
+- 개별 플롯: dpi=200 (더 높은 해상도)
+
+1.2.6 create_summary_report(output_dir, debug_data)
+-------------------------------------------
+
+**목적**: 최종 종합 보고서 (README.md) 생성
+
+**소스 코드** (375-427줄):
+```python
+def create_summary_report(output_dir, debug_data):
+    """Create final summary report"""
+    print("\n" + "="*70)
+    print("GENERATING SUMMARY REPORT")
+    print("="*70)
+
+    report_path = os.path.join(output_dir, 'README.md')
+
+    with open(report_path, 'w') as f:
+        f.write("# LDM-EKI Detailed Analysis Results\n\n")
+        f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("---\n\n")
+
+        f.write("## Contents\n\n")
+        f.write("This directory contains detailed analysis results from LDM-EKI simulation:\n\n")
+        f.write("- **`config/`** - Input configuration summary\n")
+        f.write("- **`debug_data/`** - Extracted debug data (text format)\n")
+        f.write("- **`plots/`** - Individual receptor and emission plots\n\n")
+
+        f.write("---\n\n")
+
+        f.write("## Debug Data\n\n")
+        if debug_data:
+            f.write(f"Total arrays: {len(debug_data)}\n\n")
+            f.write("| Array Name | Shape | Size (MB) |\n")
+            f.write("|------------|-------|----------|\n")
+            for key, arr in debug_data.items():
+                size_mb = arr.nbytes / (1024 * 1024)
+                f.write(f"| `{key}` | {arr.shape} | {size_mb:.2f} |\n")
+            f.write("\nAll arrays saved as text files in `debug_data/` directory.\n")
+        else:
+            f.write("No debug data available.\n")
+
+        f.write("\n---\n\n")
+
+        f.write("## Plots\n\n")
+        f.write("Individual plots extracted from all_receptors_comparison.png:\n\n")
+        f.write("- `R1_particles.png`, `R2_particles.png`, `R3_particles.png` - Particle counts\n")
+        f.write("- `R1_dose.png`, `R2_dose.png`, `R3_dose.png` - Dose observations\n")
+        f.write("- `emission_estimates.png` - Emission rate estimates\n\n")
+
+        f.write("---\n\n")
+        f.write("## How to Load Debug Data\n\n")
+        f.write("```python\n")
+        f.write("import numpy as np\n\n")
+        f.write("# Load from original NPZ archive\n")
+        f.write("data = dict(np.load('logs/debug/eki_debug_data.npz'))\n")
+        f.write("prior_state = data['prior_state']\n")
+        f.write("initial_obs = data['initial_observation']\n")
+        f.write("```\n\n")
+
+    print(f"✓ Summary report: {report_path}")
+    return report_path
+```
+
+**생성되는 보고서 예시**:
+```markdown
+# LDM-EKI Detailed Analysis Results
+
+**Generated:** 2025-10-18 14:35:25
+
+---
+
+## Contents
+
+This directory contains detailed analysis results from LDM-EKI simulation:
+
+- **`config/`** - Input configuration summary
+- **`debug_data/`** - Extracted debug data (text format)
+- **`plots/`** - Individual receptor and emission plots
+
+---
+
+## Debug Data
+
+Total arrays: 8
+
+| Array Name | Shape | Size (MB) |
+|------------|-------|----------|
+| `prior_state` | (24, 100) | 0.02 |
+| `initial_observation` | (3, 24) | 0.00 |
+| `iteration_0_state` | (24, 100) | 0.02 |
+| `iteration_0_obs` | (3, 24, 100) | 0.05 |
+| ... | ... | ... |
+
+All arrays saved as text files in `debug_data/` directory.
+
+---
+
+## Plots
+
+Individual plots extracted from all_receptors_comparison.png:
+
+- `R1_particles.png`, `R2_particles.png`, `R3_particles.png` - Particle counts
+- `R1_dose.png`, `R2_dose.png`, `R3_dose.png` - Dose observations
+- `emission_estimates.png` - Emission rate estimates
+
+---
+
+## How to Load Debug Data
+
+```python
+import numpy as np
+
+# Load from original NPZ archive
+data = dict(np.load('logs/debug/eki_debug_data.npz'))
+prior_state = data['prior_state']
+initial_obs = data['initial_observation']
+```
+```
+
+**보고서 구성**:
+1. 헤더: 타이틀 + 생성 시각
+2. Contents: 디렉토리 구조 설명
+3. Debug Data: 배열 목록 및 크기
+4. Plots: 생성된 플롯 목록
+5. How to Load: Python 코드 예시
+
+1.2.7 main()
+-------------------------------------------
+
+**목적**: 전체 후처리 워크플로우 실행
+
+**소스 코드** (430-473줄):
+```python
+def main():
+    """Main post-processing function"""
+    print("\n" + "="*70)
+    print("LDM-EKI DETAILED POST-PROCESSING")
+    print("="*70)
+    print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Change to project root
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    os.chdir(project_root)
+    print(f"Working directory: {os.getcwd()}")
+
+    # Create output directory
+    output_dir = ensure_output_dir('detailed')
+    print(f"Output directory: {output_dir}")
+
+    # Step 1: Extract debug data
+    debug_data = extract_debug_data(output_dir)
+
+    # Step 2: Create config summary
+    create_config_summary(output_dir)
+
+    # Step 3: Generate individual plots from data
+    generate_individual_plots(output_dir)
+
+    # Step 4: Create summary report
+    summary_path = create_summary_report(output_dir, debug_data)
+
+    # Final message
+    print("\n" + "="*70)
+    print("POST-PROCESSING COMPLETE!")
+    print("="*70)
+    print(f"\n📂 All results saved to: {output_dir}")
+    print(f"📄 Summary report: {summary_path}")
+    print("\nGenerated files:")
+    print(f"  • Debug data: {output_dir}/debug_data/ (text files)")
+    print(f"  • Individual plots: {output_dir}/plots/")
+    print(f"  • Configuration: {output_dir}/config/")
+    print("="*70 + "\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**실행 흐름**:
+1. 프로젝트 루트로 이동 (상대 경로 해결)
+2. 출력 디렉토리 생성
+3. 디버그 데이터 추출 (NPZ → TXT)
+4. 설정 요약 생성 (config 파일 → Markdown)
+5. 개별 플롯 생성 (compare_all_receptors.py 재사용)
+6. 종합 보고서 생성 (README.md)
+7. 최종 메시지 출력 (생성된 파일 경로)
+
+**출력 예시**:
+```
+======================================================================
+LDM-EKI DETAILED POST-PROCESSING
+======================================================================
+Timestamp: 2025-10-18 14:35:20
+Working directory: /home/user/ldm-eki-release.v.beta
+Output directory: output/results/detailed
+
+======================================================================
+EXTRACTING DEBUG DATA
+======================================================================
+
+📦 Processing: prior_state
+   Shape: (24, 100), dtype: float64
+   ✓ Saved: output/results/detailed/debug_data/prior_state.txt
+
+...
+
+======================================================================
+POST-PROCESSING COMPLETE!
+======================================================================
+
+📂 All results saved to: output/results/detailed
+📄 Summary report: output/results/detailed/README.md
+
+Generated files:
+  • Debug data: output/results/detailed/debug_data/ (text files)
+  • Individual plots: output/results/detailed/plots/
+  • Configuration: output/results/detailed/config/
+======================================================================
+```
+
+1.3 자동 안내 메시지 통합
+-----------------------------------------------------------------------------
+
+**위치**: src/core/ldm.cu (시뮬레이션 종료 직전)
+
+**구현 코드**:
+```cpp
+// 시뮬레이션 완료 후 (ldm.cu의 main 함수 끝 부분)
+std::cout << "\n" << BRIGHT_WHITE
+          << "======================================================================\n"
+          << "          DETAILED POST-PROCESSING AVAILABLE\n"
+          << "======================================================================\n"
+          << RESET;
+std::cout << "\n" << BRIGHT_CYAN << "📊 For detailed analysis, run:\n" << RESET;
+std::cout << BRIGHT_GREEN << "   python3 util/detailed_postprocess.py\n\n" << RESET;
+std::cout << BRIGHT_WHITE << "This will generate:\n" << RESET;
+std::cout << "  • " << BRIGHT_YELLOW << "Debug data extraction" << RESET << " (from eki_debug_data.npz)\n";
+std::cout << "  • " << BRIGHT_YELLOW << "Individual receptor plots" << RESET << " (high-resolution PNG files)\n";
+std::cout << "  • " << BRIGHT_YELLOW << "Configuration summary" << RESET << " (Markdown format)\n";
+std::cout << "  • " << BRIGHT_YELLOW << "Comprehensive report" << RESET << " (README.md)\n\n";
+std::cout << BRIGHT_WHITE
+          << "======================================================================\n"
+          << RESET;
+```
+
+**출력 예시**:
+```
+======================================================================
+          DETAILED POST-PROCESSING AVAILABLE
+======================================================================
+
+📊 For detailed analysis, run:
+   python3 util/detailed_postprocess.py
+
+This will generate:
+  • Debug data extraction (from eki_debug_data.npz)
+  • Individual receptor plots (high-resolution PNG files)
+  • Configuration summary (Markdown format)
+  • Comprehensive report (README.md)
+
+======================================================================
+```
+
+**자동 실행하지 않는 이유**:
+1. 선택적 기능: 사용자가 필요시에만 실행
+2. 시간 소요: 플롯 생성 시간 (16 수용체 기준 ~10초)
+3. 디스크 공간: 33개 PNG 파일 + 텍스트 파일들 (~50MB)
+4. 유연성: 사용자가 원하는 타이밍에 실행 가능
+
+=============================================================================
+2. VISUALIZE_VTK.PY 완전 분석
+=============================================================================
+
+2.1 개요 및 목적
+-----------------------------------------------------------------------------
+
+**파일 위치**: util/visualize_vtk.py
+**총 라인 수**: 627줄
+**주요 목적**: VTK 입자 분포 데이터를 지리적 지도 위에 시각화하고 GIF 애니메이션 생성
+
+**핵심 기능**:
+1. VTK 파일에서 입자 위치 (lon, lat, alt) 읽기
+2. Cartopy 지도 위에 입자 분포 히트맵 표시
+3. Gaussian smoothing으로 부드러운 컨투어 생성
+4. 시계열 VTK 파일들을 GIF 애니메이션으로 변환
+5. 자동 extent 계산 (모든 프레임에서 일관된 지도 영역)
+
+**주요 의존성**:
+- pyvista: VTK 파일 읽기
+- cartopy: 지리적 지도 투영
+- scipy.ndimage: Gaussian smoothing
+- imageio: GIF 생성
+- matplotlib: 시각화
+
+**Conda 환경**:
+```bash
+conda activate ldm-viz
+# 포함 패키지: pyvista, cartopy, scipy, imageio, matplotlib
+```
+
+**실행 방법**:
+```bash
+# 자동 감지 모드 (prior 또는 ensemble 자동 선택)
+python3 util/visualize_vtk.py
+
+# Prior 시뮬레이션 (timestep 1-100, step 5)
+python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 5
+
+# Ensemble 시뮬레이션
+python3 util/visualize_vtk.py --mode ensemble --start 1 --end 50 --step 2
+
+# 단일 VTK 파일 플롯
+python3 util/visualize_vtk.py --single output/plot_vtk_prior/plot_00050.vtk
+
+# 커스텀 지도 영역
+python3 util/visualize_vtk.py --mode prior --extent 135 145 35 40
+
+# 강한 스무딩
+python3 util/visualize_vtk.py --mode prior --sigma 3.0
+
+# 선형 색상 스케일
+python3 util/visualize_vtk.py --mode prior --linear-scale
+```
+
+**출력**:
+- output/results/particle_distribution_prior.gif
+- output/results/particle_distribution_ensemble.gif
+
+2.2 핵심 함수 분석
+-----------------------------------------------------------------------------
+
+2.2.1 plot_particle_distribution()
+-------------------------------------------
+
+**목적**: 단일 VTK 파일을 지리적 지도 위에 플롯
+
+**함수 시그니처** (60-66줄):
+```python
+def plot_particle_distribution(vtk_filename,
+                               region_extent=None,
+                               bins=(400, 400),
+                               use_log_scale=True,
+                               base_time=None,
+                               dt=None,
+                               sigma=2.0):
+```
+
+**파라미터 설명**:
+- `vtk_filename`: VTK 파일 경로
+- `region_extent`: [lon_min, lon_max, lat_min, lat_max] (None이면 자동 계산)
+- `bins`: 히스토그램 bins (기본 400×400, 고해상도)
+- `use_log_scale`: 로그 색상 스케일 사용 여부
+- `base_time`: 시뮬레이션 시작 시각 (datetime 객체)
+- `dt`: 타임스텝 길이 (초)
+- `sigma`: Gaussian smoothing 강도 (0=비활성화)
+
+**VTK 파일 읽기** (81-100줄):
+```python
+try:
+    mesh = pv.read(vtk_filename)
+except Exception as e:
+    print(f"[Error] Failed to read {vtk_filename}: {e}")
+    return None
+
+points = mesh.points
+
+if points is None or points.size == 0:
+    print(f"[Skip] {vtk_filename}: No point data.")
+    return None
+
+# Filter: valid longitude range, remove NaN/Inf
+valid_lon_mask = (points[:, 0] >= 0) & (points[:, 0] < 180.0)
+finite_mask = np.isfinite(points).all(axis=1)
+points = points[valid_lon_mask & finite_mask]
+
+if points.size == 0:
+    print(f"[Skip] {vtk_filename}: No valid points after filtering.")
+    return None
+
+lons = points[:, 0]
+lats = points[:, 1]
+```
+
+**PyVista 동작**:
+- `pv.read()`: VTK 파일을 UnstructuredGrid 객체로 로드
+- `mesh.points`: NumPy 배열 (N×3: lon, lat, alt)
+- 필터링: 유효 경도 범위 (0-180°), NaN/Inf 제거
+
+**지도 영역 자동 계산** (115-141줄):
+```python
+if region_extent is None:
+    # Use actual particle extent with a small margin
+    lon_min, lon_max = np.min(lons), np.max(lons)
+    lat_min, lat_max = np.min(lats), np.max(lats)
+
+    # Add 5% margin on each side
+    lon_margin = (lon_max - lon_min) * 0.05
+    lat_margin = (lat_max - lat_min) * 0.05
+    lon_min -= lon_margin
+    lon_max += lon_margin
+    lat_min -= lat_margin
+    lat_max += lat_margin
+
+    # Make the extent square (equal width and height)
+    lon_range = lon_max - lon_min
+    lat_range = lat_max - lat_min
+
+    if lon_range > lat_range:
+        # Expand latitude to match longitude
+        lat_center = (lat_min + lat_max) / 2
+        lat_min = lat_center - lon_range / 2
+        lat_max = lat_center + lon_range / 2
+    else:
+        # Expand longitude to match latitude
+        lon_center = (lon_min + lon_max) / 2
+        lon_min = lon_center - lat_range / 2
+        lon_max = lon_center + lat_range / 2
+else:
+    lon_min, lon_max, lat_min, lat_max = region_extent
+```
+
+**정사각형 extent의 중요성**:
+- Mercator 투영에서 왜곡 최소화
+- 지도 가로세로 비율 1:1 유지
+- 모든 프레임에서 일관된 스케일
+
+**2D 히스토그램 생성** (145-156줄):
+```python
+try:
+    H, lon_edges, lat_edges = np.histogram2d(
+        lons, lats, bins=bins, range=[[lon_min, lon_max], [lat_min, lat_max]]
+    )
+except ValueError as e:
+    print(f"[Skip] {vtk_filename}: histogram2d error - {e}")
+    return None
+
+lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2
+lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2
+Lon, Lat = np.meshgrid(lon_centers, lat_centers)
+
+# Apply Gaussian smoothing for smoother contours
+if sigma > 0:
+    H = gaussian_filter(H, sigma=sigma)
+```
+
+**히스토그램 동작**:
+- `np.histogram2d()`: 입자를 400×400 그리드에 집계
+- H[i, j]: (i, j) 셀에 있는 입자 수
+- Gaussian smoothing: 이산 히스토그램 → 부드러운 분포
+
+**Gaussian smoothing 효과**:
+- sigma=0: 비활성화 (블록 모양 히스토그램)
+- sigma=1: 약한 스무딩
+- sigma=2: 중간 스무딩 (기본값)
+- sigma=3: 강한 스무딩
+
+**Cartopy 지도 생성** (161-181줄):
+```python
+# Start plotting with square aspect ratio
+fig, ax = plt.subplots(figsize=(12, 12), subplot_kw={'projection': ccrs.PlateCarree()})
+
+# Set extent based on particle distribution (or user-specified region)
+ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.COASTLINE, linewidth=1)
+ax.add_feature(cfeature.BORDERS, linestyle=':')
+ax.add_feature(cfeature.LAND, facecolor="lightgray")
+ax.add_feature(cfeature.STATES, edgecolor="black", facecolor="none")
+ax.add_feature(cfeature.LAKES, facecolor="lightblue")
+ax.add_feature(cfeature.RIVERS, linewidth=0.5, color="blue")
+
+gl = ax.gridlines(draw_labels=True, linestyle="--", linewidth=0.5, color="gray")
+gl.xformatter = LONGITUDE_FORMATTER
+gl.yformatter = LATITUDE_FORMATTER
+gl.xlabel_style = {"size": 10, "color": "black"}
+gl.ylabel_style = {"size": 10, "color": "black"}
+gl.right_labels = False
+gl.top_labels = False
+```
+
+**Cartopy 기능**:
+- `ccrs.PlateCarree()`: 정거투영 (경위도 직교)
+- `add_feature()`: 해안선, 국경, 육지, 호수, 강 추가
+- `gridlines()`: 격자선 + 경위도 라벨
+
+**커스텀 colormap** (182-188줄):
+```python
+colors = [
+    "#fffffc", "#c0e9fc", "#83c4f1", "#5099cf", "#49a181",
+    "#6bbc51", "#69bd50", "#d3e158", "#feaf43", "#f96127",
+    "#e1342a", "#9f2b2f", "#891a19"
+]
+cmap = mcolors.ListedColormap(colors)
+```
+
+**색상 범위**:
+- 흰색 → 밝은 파랑 → 녹색 → 노랑 → 주황 → 빨강 → 진한 빨강
+- 13단계 색상 (입자 밀도 0 → 최대)
+
+**색상 스케일 설정** (191-207줄):
+```python
+if H.max() < 1e-10:
+    print(f"[Warning] {vtk_filename}: All histogram values are near zero or empty.")
+    boundaries = np.linspace(0, 1, len(colors) + 1)
+elif use_log_scale and H.max() > 1:
+    # Use logarithmic scale, starting from 1 (10^0)
+    boundaries = np.logspace(0, np.log10(H.max()), len(colors) + 1)
+else:
+    # Use linear scale
+    boundaries = np.linspace(0, H.max(), len(colors) + 1)
+
+# Ensure boundaries are strictly increasing
+if len(np.unique(boundaries)) < len(boundaries):
+    print(f"[Warning] {vtk_filename}: Boundaries not unique, using linear scale.")
+    boundaries = np.linspace(H.min(), H.max() + 1e-10, len(colors) + 1)
+
+norm = mcolors.BoundaryNorm(boundaries, ncolors=len(colors), clip=True)
+```
+
+**로그 스케일 vs 선형 스케일**:
+- 로그 스케일: 넓은 범위 표현 (1 ~ 10^6 입자)
+- 선형 스케일: 균일한 변화 표현
+
+**컨투어 플롯** (208-217줄):
+```python
+contour = ax.contourf(
+    Lon, Lat, H.T,
+    levels=boundaries,
+    cmap=cmap,
+    norm=norm,
+    transform=ccrs.PlateCarree()
+)
+
+cbar = plt.colorbar(contour, ax=ax, orientation='vertical', pad=0.02, shrink=0.8)
+cbar.set_label("Particle Count", fontsize=16)
+```
+
+**H.T (전치) 이유**:
+- NumPy: H[lon, lat] (행=경도, 열=위도)
+- contourf: H[lat, lon] (행=위도, 열=경도)
+- 전치로 차원 순서 맞춤
+
+**타임스탬프 추출** (220-238줄):
+```python
+# Extract timestamp from filename
+# Supports patterns: plot_00001.vtk, Cs-137_00015.vtk, etc.
+match = re.search(r'_(\d{5})\.vtk$', vtk_filename)
+if match:
+    time_step_idx = int(match.group(1))
+
+    # Use provided base_time and dt, or defaults
+    if base_time is None:
+        base_time = DEFAULT_BASE_TIME
+    if dt is None:
+        dt = DEFAULT_DT
+
+    time_seconds = time_step_idx * dt
+    sim_time = base_time + datetime.timedelta(seconds=time_seconds)
+    time_str = sim_time.strftime("%B %d, %Y, %H:%M UTC")
+    particle_info = f" | Particles: {len(lons):,}"
+else:
+    time_str = "Unknown Time"
+    particle_info = f" | Particles: {len(lons):,}"
+
+ax.set_title(f"LDM-EKI Simulation - {time_str}{particle_info}", fontsize=18, weight='bold')
+```
+
+**타임스탬프 계산 예시**:
+- 파일명: plot_00050.vtk
+- time_step_idx: 50
+- dt: 100초
+- time_seconds: 5000초
+- base_time: 2011-03-14 00:00:00
+- sim_time: 2011-03-14 01:23:20
+- 출력: "March 14, 2011, 01:23 UTC | Particles: 85,234"
+
+2.2.2 create_gif_from_vtk_series()
+-------------------------------------------
+
+**목적**: 여러 VTK 파일로부터 애니메이션 GIF 생성
+
+**함수 시그니처** (244-253줄):
+```python
+def create_gif_from_vtk_series(vtk_directory,
+                               filename_pattern="plot_{:05d}.vtk",
+                               start=1,
+                               end=100,
+                               step=1,
+                               output_gif="particle_distribution.gif",
+                               region_extent=None,
+                               base_time=None,
+                               dt=None,
+                               **plot_kwargs):
+```
+
+**파라미터 설명**:
+- `vtk_directory`: VTK 파일이 있는 디렉토리
+- `filename_pattern`: 파일명 패턴 (예: "plot_{:05d}.vtk")
+- `start`, `end`, `step`: 타임스텝 범위
+- `output_gif`: 출력 GIF 파일명
+- `region_extent`: 고정 지도 영역 (None이면 자동 계산)
+- `**plot_kwargs`: plot_particle_distribution()에 전달할 추가 인자
+
+**전역 extent 자동 계산** (279-349줄):
+```python
+if region_extent is None:
+    print("[Info] Computing maximum extent from all VTK files...")
+    lon_min_global, lon_max_global = float('inf'), float('-inf')
+    lat_min_global, lat_max_global = float('inf'), float('-inf')
+
+    for t in range(start, end + 1, step):
+        vtk_filename = os.path.join(vtk_directory, filename_pattern.format(t))
+        if not os.path.exists(vtk_filename):
+            continue
+
+        try:
+            mesh = pv.read(vtk_filename)
+            points = mesh.points
+            if points is None or points.size == 0:
+                continue
+
+            # Filter valid points
+            valid_lon_mask = (points[:, 0] >= 0) & (points[:, 0] < 180.0)
+            finite_mask = np.isfinite(points).all(axis=1)
+            points = points[valid_lon_mask & finite_mask]
+
+            if points.size == 0:
+                continue
+
+            lons = points[:, 0]
+            lats = points[:, 1]
+            valid_coords = np.isfinite(lons) & np.isfinite(lats)
+            lons = lons[valid_coords]
+            lats = lats[valid_coords]
+
+            if len(lons) > 0 and len(lats) > 0:
+                lon_min_global = min(lon_min_global, np.min(lons))
+                lon_max_global = max(lon_max_global, np.max(lons))
+                lat_min_global = min(lat_min_global, np.min(lats))
+                lat_max_global = max(lat_max_global, np.max(lats))
+
+        except Exception as e:
+            continue
+
+    if lon_min_global != float('inf'):
+        # Add 5% margin
+        lon_margin = (lon_max_global - lon_min_global) * 0.05
+        lat_margin = (lat_max_global - lat_min_global) * 0.05
+        lon_min_global -= lon_margin
+        lon_max_global += lon_margin
+        lat_min_global -= lat_margin
+        lat_max_global += lat_margin
+
+        # Make the extent square (equal width and height)
+        lon_range = lon_max_global - lon_min_global
+        lat_range = lat_max_global - lat_min_global
+
+        if lon_range > lat_range:
+            # Expand latitude to match longitude
+            lat_center = (lat_min_global + lat_max_global) / 2
+            lat_min_global = lat_center - lon_range / 2
+            lat_max_global = lat_center + lon_range / 2
+        else:
+            # Expand longitude to match latitude
+            lon_center = (lon_min_global + lon_max_global) / 2
+            lon_min_global = lon_center - lat_range / 2
+            lon_max_global = lon_center + lat_range / 2
+
+        region_extent = [lon_min_global, lon_max_global, lat_min_global, lat_max_global]
+        print(f"[Info] Global extent (square): lon=[{lon_min_global:.2f}, {lon_max_global:.2f}], "
+              f"lat=[{lat_min_global:.2f}, {lat_max_global:.2f}]")
+        print(f"[Info] Extent size: {lon_max_global - lon_min_global:.2f}° × {lat_max_global - lat_min_global:.2f}°")
+    else:
+        print("[Warning] Could not determine extent from VTK files, using default.")
+        region_extent = DEFAULT_REGION_EXTENT
+
+print(f"[Info] Using fixed extent for all frames: {region_extent}\n")
+```
+
+**전역 extent의 필요성**:
+- **문제**: 각 프레임마다 extent가 다르면 지도가 확대/축소되어 애니메이션이 불안정
+- **해결**: 모든 VTK 파일을 스캔하여 최대 extent 계산 후 고정
+- **결과**: 모든 프레임에서 동일한 지도 영역 유지
+
+**프레임 생성 루프** (352-378줄):
+```python
+for t in range(start, end + 1, step):
+    vtk_filename = os.path.join(vtk_directory, filename_pattern.format(t))
+
+    if not os.path.exists(vtk_filename):
+        print(f"[Skip] File not found: {vtk_filename}")
+        continue
+
+    print(f"Processing [{t:05d}]: {os.path.basename(vtk_filename)}")
+
+    fig = plot_particle_distribution(
+        vtk_filename,
+        region_extent=region_extent,
+        base_time=base_time,
+        dt=dt,
+        **plot_kwargs
+    )
+
+    if fig is None:
+        continue
+
+    # Convert figure to image
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    images.append(Image.open(buf).convert("RGB"))
+    plt.close(fig)
+```
+
+**Figure → Image 변환**:
+1. `fig.savefig(buf, format='png')`: Matplotlib Figure를 PNG로 인코딩
+2. `buf.seek(0)`: BytesIO 버퍼 포인터를 처음으로 이동
+3. `Image.open(buf)`: PIL Image 객체 생성
+4. `.convert("RGB")`: RGBA → RGB (GIF는 RGB만 지원)
+
+**GIF 저장** (379-391줄):
+```python
+if images:
+    print(f"\n[Success] Saving GIF with {len(images)} frames...")
+    images[0].save(
+        output_gif,
+        save_all=True,
+        append_images=images[1:],
+        duration=300,  # 300ms per frame
+        loop=0
+    )
+    print(f"[Success] GIF saved as {output_gif}")
+    print(f"          File size: {os.path.getsize(output_gif) / 1024 / 1024:.2f} MB")
+else:
+    print("[Warning] No valid frames were generated. GIF not created.")
+```
+
+**GIF 파라미터**:
+- `save_all=True`: 모든 프레임 저장
+- `append_images`: 첫 프레임 이후 추가 프레임
+- `duration=300`: 프레임당 300ms (1초에 ~3프레임)
+- `loop=0`: 무한 반복
+
+**GIF 크기 예시**:
+- 20 프레임 × 400×400 bins × dpi=150 → ~5-10 MB
+
+2.2.3 main()
+-------------------------------------------
+
+**목적**: 명령줄 인자 파싱 및 메인 워크플로우 실행
+
+**인자 파싱** (394-506줄):
+```python
+parser = argparse.ArgumentParser(
+    description="Generate geographic visualizations from VTK files",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog="""
+Examples:
+  # Generate GIF from prior simulation (timesteps 1-100, every 5 steps)
+  python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 5
+
+  # Generate GIF from ensemble simulation
+  python3 util/visualize_vtk.py --mode ensemble --start 1 --end 50 --step 2
+
+  # Generate single plot from specific VTK file
+  python3 util/visualize_vtk.py --single output/plot_vtk_prior/plot_00050.vtk
+
+  # Custom region extent (lon_min, lon_max, lat_min, lat_max)
+  python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 5 \\
+      --extent 135 145 35 40
+
+  # Custom output filename
+  python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 5 \\
+      --output my_simulation.gif
+    """
+)
+
+# Mode selection
+mode_group = parser.add_mutually_exclusive_group(required=False)
+mode_group.add_argument(
+    '--mode',
+    choices=['prior', 'ensemble'],
+    help='Simulation mode: prior (true simulation) or ensemble (default: auto-detect)'
+)
+mode_group.add_argument(
+    '--single',
+    metavar='VTK_FILE',
+    help='Generate single plot from specific VTK file'
+)
+
+# Time range arguments
+parser.add_argument('--start', type=int, default=1, help='Starting timestep index (default: 1)')
+parser.add_argument('--end', type=int, default=100, help='Ending timestep index (default: 100)')
+parser.add_argument('--step', type=int, default=5, help='Step size for timesteps (default: 5)')
+
+# Output options
+parser.add_argument('--output', metavar='FILENAME', help='Output GIF filename (default: auto-generated based on mode)')
+parser.add_argument('--output-dir', default='output/results', help='Output directory for GIF (default: output/results)')
+
+# Visualization options
+parser.add_argument('--extent', nargs=4, type=float, metavar=('LON_MIN', 'LON_MAX', 'LAT_MIN', 'LAT_MAX'),
+                    help=f'Geographic extent (default: {DEFAULT_REGION_EXTENT})')
+parser.add_argument('--bins', nargs=2, type=int, default=[400, 400], metavar=('NX', 'NY'),
+                    help='Histogram bins for particle density (default: 400 400)')
+parser.add_argument('--sigma', type=float, default=2.0,
+                    help='Gaussian smoothing sigma for smoother contours (default: 2.0, use 0 to disable)')
+parser.add_argument('--linear-scale', action='store_true',
+                    help='Use linear color scale instead of logarithmic')
+
+# Time parameters
+parser.add_argument('--base-time', metavar='YYYY-MM-DD-HH:MM:SS',
+                    help=f'Base simulation time (default: {DEFAULT_BASE_TIME.strftime("%Y-%m-%d %H:%M:%S")})')
+parser.add_argument('--dt', type=int, default=DEFAULT_DT,
+                    help=f'Time step duration in seconds (default: {DEFAULT_DT})')
+```
+
+**인자 그룹**:
+1. **Mode selection**: --mode (prior/ensemble) 또는 --single (단일 파일)
+2. **Time range**: --start, --end, --step
+3. **Output**: --output, --output-dir
+4. **Visualization**: --extent, --bins, --sigma, --linear-scale
+5. **Time parameters**: --base-time, --dt
+
+**자동 모드 감지** (521-541줄):
+```python
+if not args.mode and not args.single:
+    print("[Info] No mode specified, auto-detecting available VTK files...\n")
+
+    # Check which directories exist and have VTK files
+    prior_dir = 'output/plot_vtk_prior'
+    ensemble_dir = 'output/plot_vtk_ens'
+
+    prior_exists = os.path.exists(prior_dir) and len([f for f in os.listdir(prior_dir) if f.endswith('.vtk')]) > 0
+    ensemble_exists = os.path.exists(ensemble_dir) and len([f for f in os.listdir(ensemble_dir) if f.endswith('.vtk')]) > 0
+
+    if prior_exists:
+        args.mode = 'prior'
+        print(f"[Info] Found VTK files in {prior_dir}, using mode: prior")
+    elif ensemble_exists:
+        args.mode = 'ensemble'
+        print(f"[Info] Found VTK files in {ensemble_dir}, using mode: ensemble")
+    else:
+        print("[Error] No VTK files found in output/plot_vtk_prior or output/plot_vtk_ens")
+        print("        Run a simulation first or specify --single with a VTK file path.")
+        sys.exit(1)
+```
+
+**우선순위**: prior > ensemble
+- 두 디렉토리 모두 있으면 prior 선택
+- 사용자가 원하면 --mode ensemble로 명시 가능
+
+**단일 플롯 모드** (544-568줄):
+```python
+if args.single:
+    if not os.path.exists(args.single):
+        print(f"[Error] File not found: {args.single}")
+        sys.exit(1)
+
+    print(f"Generating single plot from: {args.single}")
+    fig = plot_particle_distribution(
+        args.single,
+        region_extent=region_extent,
+        bins=tuple(args.bins),
+        use_log_scale=not args.linear_scale,
+        base_time=base_time,
+        dt=args.dt,
+        sigma=args.sigma
+    )
+
+    if fig is not None:
+        output_png = args.single.replace('.vtk', '_plot.png')
+        fig.savefig(output_png, dpi=150, bbox_inches='tight')
+        print(f"[Success] Plot saved as {output_png}")
+        plt.show()
+    else:
+        print("[Error] Failed to generate plot")
+        sys.exit(1)
+    return
+```
+
+**단일 플롯 출력**:
+- VTK 파일과 동일한 위치에 PNG 저장
+- 예: `plot_00050.vtk` → `plot_00050_plot.png`
+- `plt.show()`: 그래프 창 표시 (대화형 모드)
+
+**자동 end timestep 감지** (584-599줄):
+```python
+if args.end == 100:  # default value
+    # Find the maximum timestep from existing VTK files
+    vtk_files = [f for f in os.listdir(vtk_directory) if f.endswith('.vtk')]
+    if vtk_files:
+        # Extract timestep numbers from filenames (e.g., plot_00050.vtk -> 50)
+        timesteps = []
+        for f in vtk_files:
+            match = re.search(r'_(\d{5})\.vtk$', f)
+            if match:
+                timesteps.append(int(match.group(1)))
+
+        if timesteps:
+            detected_end = max(timesteps)
+            print(f"[Info] Auto-detected end timestep: {detected_end} (found {len(timesteps)} VTK files)")
+            args.end = detected_end
+```
+
+**자동 감지 이유**:
+- 사용자가 --end를 지정하지 않으면 기본값 100 사용
+- 실제 VTK 파일이 100개 미만이면 불필요한 경고 메시지 발생
+- 디렉토리에서 최대 타임스텝 자동 감지하여 end 업데이트
+
+**GIF 생성 모드** (609-622줄):
+```python
+# Prepare output path
+output_gif = args.output if args.output else default_output
+if not output_gif.endswith('.gif'):
+    output_gif += '.gif'
+
+os.makedirs(args.output_dir, exist_ok=True)
+output_gif = os.path.join(args.output_dir, output_gif)
+
+# Generate GIF
+create_gif_from_vtk_series(
+    vtk_directory=vtk_directory,
+    filename_pattern="plot_{:05d}.vtk",
+    start=args.start,
+    end=args.end,
+    step=args.step,
+    output_gif=output_gif,
+    region_extent=region_extent,
+    bins=tuple(args.bins),
+    use_log_scale=not args.linear_scale,
+    base_time=base_time,
+    dt=args.dt,
+    sigma=args.sigma
+)
+```
+
+2.3 사용 예시 및 출력
+-----------------------------------------------------------------------------
+
+2.3.1 자동 모드 (기본)
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py
+```
+
+**출력**:
+```
+[Info] No mode specified, auto-detecting available VTK files...
+
+[Info] Found VTK files in output/plot_vtk_prior, using mode: prior
+
+======================================================================
+Generating GIF from VTK files:
+  Directory: output/plot_vtk_prior
+  Range: 1 to 216 (step 5)
+  Output: output/results/particle_distribution_prior.gif
+======================================================================
+
+[Info] Computing maximum extent from all VTK files...
+[Info] Global extent (square): lon=[129.20, 129.76], lat=[35.42, 35.98]
+[Info] Extent size: 0.56° × 0.56°
+[Info] Using fixed extent for all frames: [129.20, 129.76, 35.42, 35.98]
+
+Processing [00001]: plot_00001.vtk
+Processing [00006]: plot_00006.vtk
+Processing [00011]: plot_00011.vtk
+...
+Processing [00216]: plot_00216.vtk
+
+[Success] Saving GIF with 44 frames...
+[Success] GIF saved as output/results/particle_distribution_prior.gif
+          File size: 8.35 MB
+```
+
+2.3.2 Prior 모드 (커스텀 범위)
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 10
+```
+
+**출력**:
+- 타임스텝 1, 11, 21, ..., 91 (10개 프레임)
+- output/results/particle_distribution_prior.gif
+
+2.3.3 Ensemble 모드
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --mode ensemble --start 1 --end 50 --step 2
+```
+
+**디렉토리**: output/plot_vtk_ens/
+**출력**: output/results/particle_distribution_ensemble.gif
+
+2.3.4 단일 플롯 모드
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --single output/plot_vtk_prior/plot_00100.vtk
+```
+
+**출력**:
+- PNG: output/plot_vtk_prior/plot_00100_plot.png
+- 그래프 창 표시 (대화형 모드)
+
+2.3.5 커스텀 지도 영역
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --mode prior --extent 135 145 35 40
+```
+
+**효과**:
+- 고정 extent: 135-145°E, 35-40°N
+- 자동 계산 비활성화
+
+2.3.6 강한 스무딩
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --mode prior --sigma 3.0
+```
+
+**효과**:
+- Gaussian smoothing 강도 증가
+- 더 부드러운 컨투어
+
+2.3.7 선형 색상 스케일
+-------------------------------------------
+
+**명령어**:
+```bash
+python3 util/visualize_vtk.py --mode prior --linear-scale
+```
+
+**효과**:
+- 로그 스케일 비활성화
+- 선형 색상 분포
+
+2.4 Conda 환경 설정
+-----------------------------------------------------------------------------
+
+**환경 생성**:
+```bash
+conda create -n ldm-viz python=3.9
+conda activate ldm-viz
+```
+
+**패키지 설치**:
+```bash
+conda install -c conda-forge pyvista
+conda install -c conda-forge cartopy
+conda install scipy
+conda install imageio
+conda install matplotlib
+```
+
+**또는 한 번에**:
+```bash
+conda install -c conda-forge pyvista cartopy scipy imageio matplotlib
+```
+
+**환경 내보내기**:
+```bash
+conda env export > environment_viz.yml
+```
+
+**환경 복원**:
+```bash
+conda env create -f environment_viz.yml
+```
+
+2.5 성능 최적화
+-----------------------------------------------------------------------------
+
+2.5.1 메모리 최적화
+-------------------------------------------
+
+**문제**: 대용량 VTK 파일 (100만 입자 × 100 프레임 = 1.2GB 메모리)
+
+**해결**:
+1. **프레임별 처리**: 모든 프레임을 메모리에 로드하지 않고 하나씩 처리
+2. **Figure 명시적 닫기**: `plt.close(fig)` 호출로 메모리 해제
+3. **BytesIO 사용**: 디스크 I/O 없이 메모리에서 PNG 인코딩
+
+**코드 예시**:
+```python
+for t in range(start, end + 1, step):
+    fig = plot_particle_distribution(...)
+
+    # Figure → BytesIO → PIL Image (디스크 I/O 없음)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    buf.seek(0)
+    images.append(Image.open(buf).convert("RGB"))
+
+    # Figure 명시적 닫기 (메모리 해제)
+    plt.close(fig)
+```
+
+2.5.2 계산 최적화
+-------------------------------------------
+
+**전역 extent 1회 계산**:
+- 모든 VTK 파일 스캔 (O(N) where N=프레임 수)
+- 각 프레임에서 extent 재계산 안 함
+
+**Gaussian smoothing 캐싱**:
+- scipy.ndimage.gaussian_filter()는 충분히 빠름
+- 추가 캐싱 불필요
+
+**히스토그램 bins 조절**:
+- 400×400 (기본): 고해상도, 약간 느림
+- 200×200: 빠름, 중간 해상도
+- 600×600: 매우 고해상도, 느림
+
+**사용 예시**:
+```bash
+# 빠른 미리보기
+python3 util/visualize_vtk.py --bins 200 200 --step 10
+
+# 최종 고품질
+python3 util/visualize_vtk.py --bins 600 600 --step 1
+```
+
+2.5.3 디스크 최적화
+-------------------------------------------
+
+**GIF 압축**:
+- Pillow 기본 압축 사용
+- 추가 압축 도구: gifsicle
+
+**명령어**:
+```bash
+# GIF 크기 줄이기 (gifsicle 설치 필요)
+gifsicle -O3 --colors 256 input.gif -o output.gif
+```
+
+**프레임 간격 조절**:
+```python
+# 더 빠른 애니메이션 (더 작은 파일)
+images[0].save(output_gif, save_all=True, append_images=images[1:],
+               duration=200, loop=0)  # 200ms
+
+# 더 느린 애니메이션 (더 큰 파일)
+images[0].save(output_gif, save_all=True, append_images=images[1:],
+               duration=500, loop=0)  # 500ms
+```
+
+=============================================================================
+3. 도구 간 통합 및 워크플로우
+=============================================================================
+
+3.1 전체 워크플로우
+-----------------------------------------------------------------------------
+
+**시뮬레이션 실행 → 자동 시각화 → 선택적 후처리**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. SIMULATION (./ldm-eki)                                       │
+├─────────────────────────────────────────────────────────────────┤
+│ • EKI 최적화 실행                                                │
+│ • VTK 파일 자동 생성 (output/plot_vtk_prior/, plot_vtk_ens/)   │
+│ • 디버그 데이터 저장 (logs/debug/eki_debug_data.npz)           │
+│ • 로그 파일 저장 (logs/ldm_eki_simulation.log)                  │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. AUTO VISUALIZATION (자동 실행)                               │
+├─────────────────────────────────────────────────────────────────┤
+│ • compare_all_receptors.py 실행                                 │
+│ • 통합 플롯 생성 (all_receptors_comparison.png)                 │
+│ • 수용체별 입자/선량 비교 + 방출량 추정                          │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. OPTIONAL POST-PROCESSING (사용자 선택)                        │
+├─────────────────────────────────────────────────────────────────┤
+│ A. detailed_postprocess.py                                      │
+│    • NPZ 데이터 텍스트 추출                                      │
+│    • 개별 수용체 플롯 생성 (dpi=200)                             │
+│    • 설정 요약 Markdown 생성                                     │
+│    • 종합 보고서 (README.md)                                    │
+│                                                                 │
+│ B. visualize_vtk.py                                             │
+│    • VTK 입자 분포 지도 시각화                                   │
+│    • GIF 애니메이션 생성                                         │
+│    • Cartopy 지리적 플롯                                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+3.2 도구별 역할 분담
+-----------------------------------------------------------------------------
+
+┌──────────────────────────────────────────────────────────────────┐
+│ compare_all_receptors.py - 메인 시각화 도구                      │
+├──────────────────────────────────────────────────────────────────┤
+│ • 자동 실행 (시뮬레이션 종료 직후)                                │
+│ • 빠른 결과 확인 (통합 플롯 1개)                                  │
+│ • 수용체 비교 중심                                                │
+│ • 3×3 그리드 레이아웃 (3 수용체 × 3 플롯)                        │
+│ • dpi=150 (빠른 생성)                                            │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ detailed_postprocess.py - 상세 분석 도구                          │
+├──────────────────────────────────────────────────────────────────┤
+│ • 선택적 실행 (사용자가 필요시)                                   │
+│ • 깊이 있는 분석 (디버그 데이터 추출)                             │
+│ • 개별 플롯 (수용체당 별도 파일)                                  │
+│ • 설정 요약 (Markdown)                                           │
+│ • dpi=200 (고해상도)                                             │
+│ • compare_all_receptors.py 함수 재사용                           │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ visualize_vtk.py - 지리적 시각화 도구                             │
+├──────────────────────────────────────────────────────────────────┤
+│ • 선택적 실행 (사용자가 필요시)                                   │
+│ • 공간 분포 시각화 (지도 위 입자)                                 │
+│ • GIF 애니메이션 (시간 진화)                                     │
+│ • Cartopy 전문 기능 (지리적 투영)                                 │
+│ • PyVista VTK 로딩                                               │
+│ • Conda 환경 필요 (ldm-viz)                                      │
+└──────────────────────────────────────────────────────────────────┘
+
+3.3 출력 파일 구조
+-----------------------------------------------------------------------------
+
+```
+output/
+├── plot_vtk_prior/              # VTK 파일 (참값 시뮬레이션)
+│   ├── plot_00001.vtk
+│   ├── plot_00002.vtk
+│   └── ...
+│
+├── plot_vtk_ens/                # VTK 파일 (앙상블 최종 반복)
+│   ├── plot_00001.vtk
+│   ├── plot_00002.vtk
+│   └── ...
+│
+└── results/
+    ├── all_receptors_comparison.png          # 통합 플롯 (자동 생성)
+    │
+    ├── particle_distribution_prior.gif       # Prior GIF (선택)
+    ├── particle_distribution_ensemble.gif    # Ensemble GIF (선택)
+    │
+    └── detailed/                             # 상세 분석 (선택)
+        ├── README.md                         # 종합 보고서
+        ├── config/
+        │   └── input_summary.md              # 설정 요약
+        ├── debug_data/
+        │   ├── prior_state.txt
+        │   ├── initial_observation.txt
+        │   └── ...
+        └── plots/
+            ├── R1_particles.png
+            ├── R1_dose.png
+            ├── R2_particles.png
+            ├── R2_dose.png
+            └── emission_estimates.png
+
+logs/
+├── ldm_eki_simulation.log       # 메인 로그
+├── python_eki_output.log         # Python EKI 로그
+├── debug/
+│   └── eki_debug_data.npz        # 디버그 데이터 (NPZ)
+└── eki_iterations/
+    ├── iteration_0.npy
+    ├── iteration_1.npy
+    └── ...
+```
+
+3.4 사용자 가이드
+-----------------------------------------------------------------------------
+
+**기본 사용 (대부분의 경우)**:
+```bash
+# 1. 시뮬레이션 실행
+./ldm-eki
+
+# 2. 자동 생성된 플롯 확인
+xdg-open output/results/all_receptors_comparison.png  # Linux
+open output/results/all_receptors_comparison.png      # macOS
+```
+
+**상세 분석이 필요한 경우**:
+```bash
+# 3. 후처리 실행
+python3 util/detailed_postprocess.py
+
+# 4. 생성된 파일 확인
+ls output/results/detailed/
+cat output/results/detailed/README.md
+```
+
+**지리적 시각화가 필요한 경우**:
+```bash
+# 5. Conda 환경 활성화
+conda activate ldm-viz
+
+# 6. VTK 시각화 실행
+python3 util/visualize_vtk.py
+
+# 7. GIF 확인
+xdg-open output/results/particle_distribution_prior.gif
+```
+
+**고급 사용 (커스터마이징)**:
+```bash
+# 특정 타임스텝만 애니메이션
+python3 util/visualize_vtk.py --start 50 --end 150 --step 5
+
+# 강한 스무딩 + 선형 스케일
+python3 util/visualize_vtk.py --sigma 3.0 --linear-scale
+
+# 커스텀 지도 영역
+python3 util/visualize_vtk.py --extent 128 131 34 37
+```
+
+=============================================================================
+4. 결론 및 요약
+=============================================================================
+
+4.1 Part 2 요약
+-----------------------------------------------------------------------------
+
+**다룬 내용**:
+1. **detailed_postprocess.py** (450줄 분석)
+   - NPZ 디버그 데이터 텍스트 추출
+   - 개별 수용체 플롯 생성 (고해상도)
+   - 설정 파일 요약 (Markdown)
+   - 종합 보고서 (README.md)
+   - compare_all_receptors.py 함수 재사용
+
+2. **visualize_vtk.py** (550줄 분석)
+   - VTK 파일 읽기 (PyVista)
+   - Cartopy 지리적 지도 시각화
+   - 2D 히스토그램 + Gaussian smoothing
+   - 전역 extent 자동 계산
+   - GIF 애니메이션 생성
+   - 명령줄 인자 파싱
+
+**주요 설계 패턴**:
+- **코드 재사용**: detailed_postprocess.py가 compare_all_receptors.py 함수 import
+- **자동 감지**: 모드/extent/end timestep 자동 감지
+- **유연성**: 풍부한 명령줄 옵션
+- **Fail-safe**: 파일 없을 시 graceful fallback
+
+**성능 최적화**:
+- 프레임별 메모리 해제 (plt.close)
+- BytesIO 사용 (디스크 I/O 최소화)
+- 전역 extent 1회 계산
+- 히스토그램 bins 조절 가능
+
+4.2 Part 3 예고
+-----------------------------------------------------------------------------
+
+**다룰 내용**:
+1. **C++ VTK 출력 시스템**
+   - src/visualization/ldm_plot_vtk.cu 완전 분석
+   - VTK 파일 포맷 구조
+   - 입자 데이터 → VTK 변환
+   - 핵종별 파일 출력
+   - enable_vtk_output 제어 로직
+
+2. **디버깅 도구**
+   - Memory Doctor 시스템
+   - Kernel Error Collector
+   - 공유 메모리 진단 도구
+
+3. **통합 및 자동화**
+   - 시뮬레이션 → 시각화 자동 파이프라인
+   - cleanup.py 통합
+   - Makefile 빌드 시스템
+   - 전체 워크플로우 최적화
+
+4. **향후 개선 방향**
+   - 웹 기반 대화형 시각화
+   - 실시간 모니터링
+   - 3D 시각화 (Mayavi/VTK)
+   - 병렬 처리 최적화
+
+=============================================================================
+END OF PART 2
+=============================================================================
+
+총 줄 수: ~1,000줄
+다음: Part 3 (C++ VTK 출력, 디버깅 도구, 통합 및 자동화)

@@ -406,7 +406,7 @@ void MemoryDoctor::logReceivedData(const std::string& data_type, const float* da
 
     // Print console summary (arrow direction: ← from Python)
     std::cout << Color::YELLOW << "[MEMORY_DOCTOR] " << Color::RESET
-              << "📥 Iteration " << Color::BOLD << iteration << Color::RESET
+              << "Iteration " << Color::BOLD << iteration << Color::RESET
               << ": C++ received " << data_type
               << " (" << rows << "×" << cols << ") ← Python\n";
 }

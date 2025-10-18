@@ -13,16 +13,6 @@ import pickle
 import Optimizer_EKI_np
 import pandas as pd
 
-"""
-LDM-EKI main execution script.
-
-Orchestrates ensemble Kalman inversion for emission source estimation.
-Manages iterative optimization loop and result saving.
-
-Usage:
-    python RunEstimator.py --ensemble_size 50 --max_iterations 10
-"""
-
 # Functions
 def _parse():
     parser = argparse.ArgumentParser(description='Run EKI')

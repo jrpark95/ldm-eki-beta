@@ -6,12 +6,12 @@
  *
  * @details Provides two categories of functions:
  *
- *          **1. VTK Utilities** (Production code)
+ *          1. VTK Utilities (Production code)
  *          - Byte-order conversion for VTK binary format
  *          - Active particle counting for file headers
  *          - Used in all VTK output operations
  *
- *          **2. Validation Functions** (Development/debugging)
+ *          2. Validation Functions (Development/debugging)
  *          - Time-series logging of particle concentrations
  *          - Nuclide decay analysis and CRAM verification
  *          - Gridded concentration export for model comparison
