@@ -49,7 +49,7 @@
 void LDM::outputParticlesBinaryMPI(int timestep){
 
     // Step 1: Copy particle data from GPU to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Step 2: Count active particles for file header
     int part_num = countActiveParticles();
@@ -87,16 +87,16 @@ void LDM::outputParticlesBinaryMPI(int timestep){
     vtkFile << "POINTS " << part_num << " float\n";
     float zsum = 0.0;
     for (int i = 0; i < nop; ++i){
-        if(!part[i].flag) continue;  // Skip inactive particles
+        if(!h_part[i].flag) continue;  // Skip inactive particles
 
         // Convert GFS grid coordinates to geographic coordinates
         // GFS grid: x ∈ [0, 719] (0.5° resolution), y ∈ [0, 359]
         // Geographic: lon ∈ [-179°, +180°], lat ∈ [-90°, +90°]
-        float x = -179.0 + part[i].x * 0.5;  // Longitude
-        float y = -90.0 + part[i].y * 0.5;   // Latitude
-        float z = part[i].z / 3000.0;        // Scaled altitude for visualization
+        float x = -179.0 + h_part[i].x * 0.5;  // Longitude
+        float y = -90.0 + h_part[i].y * 0.5;   // Latitude
+        float z = h_part[i].z / 3000.0;        // Scaled altitude for visualization
 
-        zsum += part[i].z;  // Accumulate for statistics (unused)
+        zsum += h_part[i].z;  // Accumulate for statistics (unused)
 
         // VTK binary format requires big-endian byte order
         swapByteOrder(x);
@@ -121,8 +121,8 @@ void LDM::outputParticlesBinaryMPI(int timestep){
     vtkFile << "SCALARS Q float 1\n";
     vtkFile << "LOOKUP_TABLE default\n";
     for (int i = 0; i < nop; ++i){
-        if(!part[i].flag) continue;
-        float vval = part[i].conc;
+        if(!h_part[i].flag) continue;
+        float vval = h_part[i].conc;
         swapByteOrder(vval);
         vtkFile.write(reinterpret_cast<char*>(&vval), sizeof(float));
     }
@@ -131,8 +131,8 @@ void LDM::outputParticlesBinaryMPI(int timestep){
     vtkFile << "SCALARS time_idx int 1\n";
     vtkFile << "LOOKUP_TABLE default\n";
     for (int i = 0; i < nop; ++i){
-        if(!part[i].flag) continue;
-        int vval = part[i].timeidx;
+        if(!h_part[i].flag) continue;
+        int vval = h_part[i].timeidx;
         swapByteOrder(vval);
         vtkFile.write(reinterpret_cast<char*>(&vval), sizeof(int));
     }
@@ -172,7 +172,7 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
     omp_set_num_threads(50);
 
     // Step 2: Copy all ensemble particles from GPU to host
-    size_t total_particles = part.size();
+    size_t total_particles = h_part.size();
 
     if (total_particles == 0) {
         std::cerr << Color::RED << Color::BOLD << "[ERROR] " << Color::RESET
@@ -180,7 +180,7 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
         return;
     }
 
-    cudaMemcpy(part.data(), d_part, total_particles * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, total_particles * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Step 3: Create output directory
     std::string path = "output/plot_vtk_ens";
@@ -209,17 +209,17 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
     // Only selected ensembles (typically 3) instead of all (typically 100)
     std::vector<std::vector<int>> ensemble_particle_indices(ensemble_size);
     for (int i = 0; i < total_particles; ++i) {
-        if (part[i].flag && part[i].ensemble_id >= 0 && part[i].ensemble_id < ensemble_size) {
+        if (h_part[i].flag && h_part[i].ensemble_id >= 0 && h_part[i].ensemble_id < ensemble_size) {
             // Check if this ensemble is selected for output
             bool is_selected = false;
             for (int selected_id : selected_ensemble_ids) {
-                if (part[i].ensemble_id == selected_id) {
+                if (h_part[i].ensemble_id == selected_id) {
                     is_selected = true;
                     break;
                 }
             }
             if (is_selected) {
-                ensemble_particle_indices[part[i].ensemble_id].push_back(i);
+                ensemble_particle_indices[h_part[i].ensemble_id].push_back(i);
             }
         }
     }
@@ -263,10 +263,10 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
         float zsum = 0.0;
         for (int idx : particle_indices){
             // Coordinate conversion (same as single mode)
-            float x = -179.0 + part[idx].x * 0.5;
-            float y = -90.0 + part[idx].y * 0.5;
-            float z = part[idx].z / 3000.0;
-            zsum += part[idx].z;
+            float x = -179.0 + h_part[idx].x * 0.5;
+            float y = -90.0 + h_part[idx].y * 0.5;
+            float z = h_part[idx].z / 3000.0;
+            zsum += h_part[idx].z;
 
             swapByteOrder(x);
             swapByteOrder(y);
@@ -284,7 +284,7 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
         vtkFile << "SCALARS Q float 1\n";
         vtkFile << "LOOKUP_TABLE default\n";
         for (int idx : particle_indices){
-            float vval = part[idx].conc;
+            float vval = h_part[idx].conc;
             swapByteOrder(vval);
             vtkFile.write(reinterpret_cast<char*>(&vval), sizeof(float));
         }
@@ -293,7 +293,7 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
         vtkFile << "SCALARS time_idx int 1\n";
         vtkFile << "LOOKUP_TABLE default\n";
         for (int idx : particle_indices){
-            int vval = part[idx].timeidx;
+            int vval = h_part[idx].timeidx;
             swapByteOrder(vval);
             vtkFile.write(reinterpret_cast<char*>(&vval), sizeof(int));
         }

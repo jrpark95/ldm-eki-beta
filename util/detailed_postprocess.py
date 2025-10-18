@@ -23,6 +23,29 @@ import struct
 # Add src/eki to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'eki'))
 
+"""
+Detailed post-processing and analysis for LDM-EKI results.
+
+Dependencies:
+    - numpy: Array operations
+    - os, sys: File operations
+    - src.eki.eki_debug_logger: Debug data loading (project module)
+    - util.compare_all_receptors: Plotting functions (project module)
+
+Input files required:
+    - logs/debug/eki_debug_data.npz: Debug data archive
+    - input/*.conf: All configuration files
+    - (Indirectly via compare_all_receptors: observation and iteration data)
+
+Output:
+    - output/postprocess/debug_data_extracted.txt
+    - output/postprocess/config_summary.md
+    - Individual receptor plots (via compare_all_receptors functions)
+
+Usage:
+    python3 util/detailed_postprocess.py
+"""
+
 from eki_debug_logger import load_debug_data
 
 

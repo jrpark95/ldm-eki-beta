@@ -24,7 +24,7 @@
  */
 int LDM::countActiveParticles(){
     int count = 0;
-    for(int i = 0; i < nop; ++i) if(part[i].flag == 1) count++;
+    for(int i = 0; i < nop; ++i) if(h_part[i].flag == 1) count++;
     return count;
 }
 
@@ -82,7 +82,7 @@ void LDM::swapByteOrder(int& value){
  */
 void LDM::log_first_particle_concentrations(int timestep, float currentTime) {
     // Copy particles from GPU to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Ensure validation directory exists
     #ifdef _WIN32
@@ -113,8 +113,8 @@ void LDM::log_first_particle_concentrations(int timestep, float currentTime) {
 
     // Find first active particle
     bool found_active = false;
-    for (size_t idx = 0; idx < part.size(); idx++) {
-        const auto& p = part[idx];
+    for (size_t idx = 0; idx < h_part.size(); idx++) {
+        const auto& p = h_part[idx];
         if (p.flag) {
             found_active = true;
             NuclideConfig* nucConfig = NuclideConfig::getInstance();
@@ -128,8 +128,8 @@ void LDM::log_first_particle_concentrations(int timestep, float currentTime) {
         }
     }
     if (!found_active) {
-        if (!part.empty()) {
-            const auto& p = part[0];
+        if (!h_part.empty()) {
+            const auto& p = h_part[0];
             NuclideConfig* nucConfig = NuclideConfig::getInstance();
             int num_nuclides = nucConfig->getNumNuclides();
             csvFile << timestep << "," << currentTime << "," << p.conc;
@@ -162,7 +162,7 @@ void LDM::log_first_particle_concentrations(int timestep, float currentTime) {
  */
 void LDM::log_all_particles_nuclide_ratios(int timestep, float currentTime) {
     // Copy particles from device to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Ensure validation directory exists
     #ifdef _WIN32
@@ -194,7 +194,7 @@ void LDM::log_all_particles_nuclide_ratios(int timestep, float currentTime) {
     float total_conc = 0.0f;
     int active_particles = 0;
 
-    for (const auto& p : part) {
+    for (const auto& p : h_part) {
         if (p.flag) {
             active_particles++;
             total_conc += p.conc;
@@ -240,7 +240,7 @@ void LDM::log_all_particles_nuclide_ratios(int timestep, float currentTime) {
  */
 void LDM::log_first_particle_cram_detail(int timestep, float currentTime, float dt_used) {
     // Copy particles from device to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Ensure validation directory exists
     #ifdef _WIN32
@@ -274,7 +274,7 @@ void LDM::log_first_particle_cram_detail(int timestep, float currentTime, float 
     }
 
     // Find first active particle and log detailed information
-    for (const auto& p : part) {
+    for (const auto& p : h_part) {
         if (p.flag) {
             NuclideConfig* nucConfig = NuclideConfig::getInstance();
             int num_nuclides = nucConfig->getNumNuclides();
@@ -335,7 +335,7 @@ void LDM::log_first_particle_cram_detail(int timestep, float currentTime, float 
  */
 void LDM::log_first_particle_decay_analysis(int timestep, float currentTime) {
     // Copy particles from device to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Ensure validation directory exists
     #ifdef _WIN32
@@ -357,7 +357,7 @@ void LDM::log_first_particle_decay_analysis(int timestep, float currentTime) {
     }
 
     // Find first active particle
-    for (const auto& p : part) {
+    for (const auto& p : h_part) {
         if (p.flag) {
             NuclideConfig* nucConfig = NuclideConfig::getInstance();
             int num_nuclides = nucConfig->getNumNuclides();
@@ -417,7 +417,7 @@ void LDM::exportValidationData(int timestep, float currentTime) {
     }
 
     // Copy particles from device to host
-    cudaMemcpy(part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_part.data(), d_part, nop * sizeof(LDMpart), cudaMemcpyDeviceToHost);
 
     // Export grid data only at key timesteps (save disk space)
     if (timestep % 50 == 0 || timestep <= 10 || timestep >= 710) {
@@ -469,7 +469,7 @@ void LDM::exportConcentrationGrid(int timestep, float currentTime) {
         grid_x, std::vector<std::vector<int>>(grid_y, std::vector<int>(grid_z, 0)));
 
     // Map active particles to grid
-    for (const auto& p : part) {
+    for (const auto& p : h_part) {
         if (!p.flag) continue;
 
         // Convert GFS grid coordinates to geographic coordinates
@@ -569,7 +569,7 @@ void LDM::exportNuclideTotal(int timestep, float currentTime) {
     float total_conc = 0.0f;
     int active_particles = 0;
 
-    for (const auto& p : part) {
+    for (const auto& p : h_part) {
         if (p.flag) {
             active_particles++;
             total_conc += p.conc;

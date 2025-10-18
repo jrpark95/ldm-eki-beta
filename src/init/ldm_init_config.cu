@@ -150,9 +150,9 @@ void LDM::loadSimulationConfiguration(){
 
                 Source src;
                 sscanf(buffer, "%f %f %f", &src.lon, &src.lat, &src.height);
-                sources.push_back(src);
+                h_sources.push_back(src);
             }
-            sources.pop_back();  // Remove sentinel entry
+            h_sources.pop_back();  // Remove sentinel entry
         }
 
         // Parse [SOURCE_TERM] section: decay constants and deposition velocities
@@ -163,11 +163,11 @@ void LDM::loadSimulationConfiguration(){
                 int srcnum;
                 float decay, depvel;
                 sscanf(buffer, "%d %f %f", &srcnum, &decay, &depvel);
-                decayConstants.push_back(decay);
-                drydepositionVelocity.push_back(depvel);
+                h_decay_constants.push_back(decay);
+                h_dry_deposition_vel.push_back(depvel);
             }
-            decayConstants.pop_back();      // Remove sentinel entry
-            drydepositionVelocity.pop_back();
+            h_decay_constants.pop_back();      // Remove sentinel entry
+            h_dry_deposition_vel.pop_back();
         }
 
         // Parse [RELEASE_CASES] section: emission scenarios
@@ -176,7 +176,7 @@ void LDM::loadSimulationConfiguration(){
                 if (buffer[0] == '#') continue;
                 Concentration conc;
                 sscanf(buffer, "%d %d %lf", &conc.location, &conc.sourceterm, &conc.value);
-                concentrations.push_back(conc);
+                h_concentrations.push_back(conc);
             }
         }
     }
@@ -1978,7 +1978,7 @@ void LDM::loadSourceConfig() {
     int line_number = 0;
 
     // Clear existing sources
-    sources.clear();
+    h_sources.clear();
 
     while (fgets(buffer, sizeof(buffer), sourceFile)) {
         line_number++;
@@ -2124,13 +2124,13 @@ void LDM::loadSourceConfig() {
             exit(1);
         }
 
-        sources.push_back(src);
+        h_sources.push_back(src);
     }
 
     fclose(sourceFile);
 
     // Validation: at least one source must be defined
-    if (sources.empty()) {
+    if (h_sources.empty()) {
         std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
                   << Color::RESET << "No valid sources found in source.conf" << std::endl;
         std::cerr << std::endl;
@@ -2154,11 +2154,11 @@ void LDM::loadSourceConfig() {
 
     // Print loaded sources summary
     std::cout << Color::BOLD << "Source Locations" << Color::RESET << std::endl;
-    for (size_t i = 0; i < sources.size(); i++) {
+    for (size_t i = 0; i < h_sources.size(); i++) {
         std::cout << "  Source " << (i+1) << "            : "
-                  << sources[i].lon << "°E, "
-                  << sources[i].lat << "°N, "
-                  << sources[i].height << "m" << std::endl;
+                  << h_sources[i].lon << "°E, "
+                  << h_sources[i].lat << "°N, "
+                  << h_sources[i].height << "m" << std::endl;
     }
 }
 
@@ -2221,8 +2221,8 @@ void LDM::loadNuclidesConfig() {
     }
 
     // Clear existing data
-    decayConstants.clear();
-    drydepositionVelocity.clear();
+    h_decay_constants.clear();
+    h_dry_deposition_vel.clear();
 
     char buffer[256];
     int line_number = 0;
@@ -2252,8 +2252,8 @@ void LDM::loadNuclidesConfig() {
 
         if (parsed == 3) {
             // Successfully parsed new format
-            decayConstants.push_back(fabs(decay_const));  // Ensure positive
-            drydepositionVelocity.push_back(dep_vel);
+            h_decay_constants.push_back(fabs(decay_const));  // Ensure positive
+            h_dry_deposition_vel.push_back(dep_vel);
             nuclide_count++;
         }
         else {
@@ -2268,8 +2268,8 @@ void LDM::loadNuclidesConfig() {
                 std::cerr << Color::YELLOW << "[LEGACY FORMAT] " << Color::RESET
                           << "Line " << line_number << ": Using default deposition velocity 1.0 m/s" << std::endl;
                 std::cerr << "  Consider migrating to new format: NUCLIDE DECAY_CONST DEP_VEL" << std::endl;
-                decayConstants.push_back(fabs(decay_const));  // Ensure positive
-                drydepositionVelocity.push_back(1.0f);  // Hardcoded for legacy compatibility
+                h_decay_constants.push_back(fabs(decay_const));  // Ensure positive
+                h_dry_deposition_vel.push_back(1.0f);  // Hardcoded for legacy compatibility
                 nuclide_count++;
             }
             else {
@@ -2307,11 +2307,11 @@ void LDM::loadNuclidesConfig() {
     }
 
     // ===== VALIDATION: Check all decay constants =====
-    for (size_t i = 0; i < decayConstants.size(); i++) {
-        if (decayConstants[i] < 0.0f) {
+    for (size_t i = 0; i < h_decay_constants.size(); i++) {
+        if (h_decay_constants[i] < 0.0f) {
             std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
                       << Color::RESET << "Negative decay constant for nuclide " << (i+1)
-                      << ": " << decayConstants[i] << " s⁻¹" << std::endl;
+                      << ": " << h_decay_constants[i] << " s⁻¹" << std::endl;
             std::cerr << std::endl;
             std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
             std::cerr << "    Decay constants must be non-negative." << std::endl;
@@ -2329,11 +2329,11 @@ void LDM::loadNuclidesConfig() {
             std::cerr << std::endl;
             exit(1);
         }
-        if (decayConstants[i] > 1.0f) {
+        if (h_decay_constants[i] > 1.0f) {
             std::cerr << std::endl << Color::YELLOW << Color::BOLD << "[WARNING] "
                       << Color::RESET << "Very large decay constant for nuclide " << (i+1)
-                      << ": " << decayConstants[i] << " s⁻¹" << std::endl;
-            std::cerr << "  This corresponds to a half-life of " << (0.693147f / decayConstants[i])
+                      << ": " << h_decay_constants[i] << " s⁻¹" << std::endl;
+            std::cerr << "  This corresponds to a half-life of " << (0.693147f / h_decay_constants[i])
                       << " seconds." << std::endl;
             std::cerr << "  Such short-lived nuclides may decay before significant transport occurs." << std::endl;
             std::cerr << std::endl;
@@ -2341,11 +2341,11 @@ void LDM::loadNuclidesConfig() {
     }
 
     // ===== VALIDATION: Check all deposition velocities =====
-    for (size_t i = 0; i < drydepositionVelocity.size(); i++) {
-        if (drydepositionVelocity[i] < 0.0f) {
+    for (size_t i = 0; i < h_dry_deposition_vel.size(); i++) {
+        if (h_dry_deposition_vel[i] < 0.0f) {
             std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
                       << Color::RESET << "Negative deposition velocity for nuclide " << (i+1)
-                      << ": " << drydepositionVelocity[i] << " m/s" << std::endl;
+                      << ": " << h_dry_deposition_vel[i] << " m/s" << std::endl;
             std::cerr << std::endl;
             std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
             std::cerr << "    Deposition velocities must be non-negative." << std::endl;
@@ -2362,10 +2362,10 @@ void LDM::loadNuclidesConfig() {
             std::cerr << std::endl;
             exit(1);
         }
-        if (drydepositionVelocity[i] > 1.0f) {
+        if (h_dry_deposition_vel[i] > 1.0f) {
             std::cerr << std::endl << Color::YELLOW << Color::BOLD << "[WARNING] "
                       << Color::RESET << "Very large deposition velocity for nuclide " << (i+1)
-                      << ": " << drydepositionVelocity[i] << " m/s" << std::endl;
+                      << ": " << h_dry_deposition_vel[i] << " m/s" << std::endl;
             std::cerr << "  Typical deposition velocities are < 0.1 m/s." << std::endl;
             std::cerr << "  Such high values suggest rapid gravitational settling (large particles)." << std::endl;
             std::cerr << std::endl;
@@ -2381,8 +2381,8 @@ void LDM::loadNuclidesConfig() {
 
     // Print first nuclide as example
     if (nuclide_count > 0) {
-        std::cout << "  Decay constant     : " << decayConstants[0] << " s⁻¹" << std::endl;
-        std::cout << "  Deposition velocity: " << drydepositionVelocity[0] << " m/s" << std::endl;
+        std::cout << "  Decay constant     : " << h_decay_constants[0] << " s⁻¹" << std::endl;
+        std::cout << "  Deposition velocity: " << h_dry_deposition_vel[0] << " m/s" << std::endl;
     }
 }
 

@@ -571,7 +571,7 @@ bool LDM::writeEKIObservationsToSharedMemory(void* writer_ptr) {
  * @pre initializeEKIObservationSystem() called with is_ensemble_mode=true
  * @pre d_ensemble_dose allocated and zeroed
  * @pre Particles initialized with ensemble_id field set
- * @pre part.size() == nop * num_ensembles
+ * @pre h_part.size() == nop * num_ensembles
  *
  * @post Dose accumulated for all ensembles in GPU memory
  * @post At boundaries: Results copied to eki_ensemble_observations
@@ -621,7 +621,7 @@ void LDM::computeReceptorObservations_AllEnsembles(int timestep, float currentTi
     }
 
     int num_receptors = g_eki.num_receptors;
-    int total_particles = part.size();
+    int total_particles = h_part.size();
 
     // Verify ensemble dose memory is initialized
     if (d_ensemble_dose == nullptr) {

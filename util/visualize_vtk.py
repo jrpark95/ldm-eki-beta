@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 """
-VTK Particle Distribution Visualization and GIF Generator
+VTK particle distribution visualization and GIF animation tool.
 
-This script reads VTK files from LDM-EKI simulation output and creates
-geographic visualizations of particle distributions, including animated GIFs.
+Dependencies:
+    - pyvista: VTK file reading and processing
+    - numpy: Array operations
+    - matplotlib: Figure creation
+    - cartopy: Geographic map projections
+    - scipy.ndimage: Gaussian smoothing for heatmaps
+    - imageio: GIF animation creation
+    - datetime: Timestamp handling
+
+Conda environment:
+    conda activate ldm-viz
+    (Includes all required packages: pyvista, matplotlib, cartopy, scipy, imageio)
+
+Input files:
+    - output/plot_vtk_prior/*.vtk: Single simulation particle snapshots
+    - output/plot_vtk_ens/*.vtk: Ensemble simulation particle snapshots
+
+Output:
+    - output/results/particle_distribution_prior.gif
+    - output/results/particle_distribution_ensemble.gif
+    - Individual PNG frames (if --save-frames specified)
 
 Usage:
-    python3 util/visualize_vtk.py [options]
-
-Examples:
-    # Generate GIF from prior simulation
-    python3 util/visualize_vtk.py --mode prior --start 1 --end 100 --step 5
-
-    # Generate GIF from ensemble simulation
-    python3 util/visualize_vtk.py --mode ensemble --start 1 --end 100 --step 5
-
-    # Generate single plot
-    python3 util/visualize_vtk.py --single output/plot_vtk_prior/plot_00050.vtk
+    python3 util/visualize_vtk.py              # Auto-detect and process all VTK files
+    python3 util/visualize_vtk.py --mode prior --start 1 --end 100
+    python3 util/visualize_vtk.py --single output/plot_vtk_prior/plot_00100.vtk
 """
 
 import numpy as np

@@ -61,6 +61,10 @@
  *     model FLEXPART version 6.2. Atmos. Chem. Phys., 5, 2461-2474.
  *
  * @author Juryong Park, 2025
+ *
+ * @note This file implements physics for SINGLE MODE simulations.
+ *       For ensemble mode, see ldm_kernels_particle_ens.cu (identical physics).
+ *       For grid output variants, see ldm_kernels_dump.cu and ldm_kernels_dump_ens.cu.
  */
 
 #include "ldm_kernels_particle.cuh"

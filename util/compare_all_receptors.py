@@ -5,6 +5,22 @@ Dynamically generates multiple pages (3 receptors per page)
 1. Particle counts for receptors
 2. Observation dose for receptors
 3. Emission estimates from EKI iterations (shown on all pages)
+
+Dependencies:
+    - numpy: Array operations
+    - matplotlib: Plotting and visualization
+    - struct: Binary data reading
+    - re: Regular expression parsing
+    - os, sys: File system operations
+
+Input files required:
+    - input/receptor.conf: Receptor configuration
+    - input/eki.conf: EKI settings (timestep interval)
+    - /dev/shm/ldm_eki_ensemble_observations_*: Observation data (binary)
+    - logs/eki_iterations/*.pkl: Iteration results
+
+Output:
+    - output/results/all_receptors_comparison.png
 """
 import numpy as np
 import struct

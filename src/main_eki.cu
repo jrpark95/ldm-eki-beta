@@ -716,7 +716,7 @@ int main(int argc, char** argv) {
         }
 
         // Clear previous particles for reinitialization
-        ldm.part.clear();
+        ldm.h_part.clear();
 
         // Initialize particles for all ensembles with new states
         ldm.initializeParticlesEKI_AllEnsembles(ensemble_matrix.data(), num_ensemble, num_states);
@@ -728,10 +728,10 @@ int main(int argc, char** argv) {
         int check_count = 0;
         int particle_zero_count = 0;
         int particle_nonzero_count = 0;
-        for (size_t i = 0; i < std::min(size_t(1000), ldm.part.size()); i++) {
+        for (size_t i = 0; i < std::min(size_t(1000), ldm.h_part.size()); i++) {
             float total_conc = 0.0f;
             for (int nuc = 0; nuc < 60; nuc++) {
-                total_conc += ldm.part[i].concentrations[nuc];
+                total_conc += ldm.h_part[i].concentrations[nuc];
             }
             if (total_conc == 0.0f) {
                 particle_zero_count++;
@@ -739,9 +739,9 @@ int main(int argc, char** argv) {
                 particle_nonzero_count++;
             }
             if (check_count < 5) {
-                std::cout << "  Particle " << i << " (ens=" << ldm.part[i].ensemble_id
-                          << ", timeidx=" << ldm.part[i].timeidx
-                          << "): conc=" << ldm.part[i].conc
+                std::cout << "  Particle " << i << " (ens=" << ldm.h_part[i].ensemble_id
+                          << ", timeidx=" << ldm.h_part[i].timeidx
+                          << "): conc=" << ldm.h_part[i].conc
                           << ", sum=" << total_conc << std::endl;
                 check_count++;
             }
@@ -754,17 +754,17 @@ int main(int argc, char** argv) {
         if (current_iteration == 1) {
             size_t expected_particles = static_cast<size_t>(num_ensemble) * num_states * (10000 / 24);
             std::cout << Color::YELLOW << "[ENSEMBLE] " << Color::RESET
-                      << "Total particles after initialization: " << ldm.part.size() << std::endl;
+                      << "Total particles after initialization: " << ldm.h_part.size() << std::endl;
             std::cout << Color::YELLOW << "[ENSEMBLE] " << Color::RESET
                       << "Expected particles: ~" << expected_particles
                       << " (" << num_ensemble << " ensembles × " << num_states
                       << " states × " << (10000/24) << " particles/state)" << std::endl;
         } else {
             std::cout << Color::YELLOW << "[ENSEMBLE] " << Color::RESET
-                      << "Particles reinitialized: " << ldm.part.size() << std::endl;
+                      << "Particles reinitialized: " << ldm.h_part.size() << std::endl;
         }
 
-        if (ldm.part.size() == 0) {
+        if (ldm.h_part.size() == 0) {
             std::cerr << Color::RED << "[ERROR] No particles initialized! Check initializeParticlesEKI_AllEnsembles()"
                       << Color::RESET << std::endl;
             continue_iterations = false;
@@ -778,7 +778,7 @@ int main(int argc, char** argv) {
             cudaFree(ldm.d_part);
             ldm.d_part = nullptr;
         }
-        ldm.allocateGPUMemory();  // Will allocate for new part.size()
+        ldm.allocateGPUMemory();  // Will allocate for new h_part.size()
 
         // Reset EKI observation system for this iteration
         // NOTE: Don't call cleanupEKIObservationSystem() here as it deallocates GPU memory

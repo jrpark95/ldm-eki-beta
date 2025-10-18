@@ -54,15 +54,15 @@
  * @date 2025
  *****************************************************************************/
 void LDM::allocateGPUMemory(){
-        if (part.empty()) {
+        if (h_part.empty()) {
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "No particles to copy to device (part vector is empty)" << std::endl;
             return;
         }
 
         std::cout << Color::CYAN << "[GPU] " << Color::RESET << "Allocating memory for "
-                  << Color::BOLD << part.size() << Color::RESET << " particles" << std::endl;
+                  << Color::BOLD << h_part.size() << Color::RESET << " particles" << std::endl;
 
-        size_t total_size = part.size() * sizeof(LDMpart);
+        size_t total_size = h_part.size() * sizeof(LDMpart);
 
         cudaError_t err = cudaMalloc((void**)&d_part, total_size);
         if (err != cudaSuccess){
@@ -74,7 +74,7 @@ void LDM::allocateGPUMemory(){
             exit(EXIT_FAILURE);
         }
 
-        err = cudaMemcpy(d_part, part.data(), total_size, cudaMemcpyHostToDevice);
+        err = cudaMemcpy(d_part, h_part.data(), total_size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess){
             std::cerr << Color::RED << "[ERROR] " << Color::RESET << "Failed to copy particle data from host to device: " << cudaGetErrorString(err) << std::endl;
             cudaFree(d_part);
@@ -85,13 +85,13 @@ void LDM::allocateGPUMemory(){
         // Verify GPU data immediately after copy
         std::cout << Color::YELLOW << "[DEBUG] " << Color::RESET << "Verifying GPU data transfer..." << std::endl;
 
-        int verify_count = std::min(3, (int)part.size());
+        int verify_count = std::min(3, (int)h_part.size());
         std::vector<LDMpart> gpu_verify(verify_count);
 
         err = cudaMemcpy(gpu_verify.data(), d_part, verify_count * sizeof(LDMpart), cudaMemcpyDeviceToHost);
         if (err == cudaSuccess) {
             for (int i = 0; i < verify_count; i++) {
-                const LDMpart& cpu_p = part[i];
+                const LDMpart& cpu_p = h_part[i];
                 const LDMpart& gpu_p = gpu_verify[i];
 
                 if (std::abs(cpu_p.conc - gpu_p.conc) > 1e-3f) {
@@ -156,17 +156,17 @@ void LDM::allocateGPUMemory(){
  *****************************************************************************/
 void LDM::checkParticleNaN(const std::string& location, int max_check) {
 #ifdef DEBUG
-    if (part.empty()) {
+    if (h_part.empty()) {
         std::cout << Color::YELLOW << "[DEBUG] " << Color::RESET
                   << location << ": Particle data is empty" << std::endl;
         return;
     }
 
     int nan_count = 0;
-    int check_count = std::min(max_check, static_cast<int>(part.size()));
+    int check_count = std::min(max_check, static_cast<int>(h_part.size()));
 
     for (int i = 0; i < check_count; i++) {
-        const LDMpart& p = part[i];
+        const LDMpart& p = h_part[i];
         bool has_nan = std::isnan(p.x) || std::isnan(p.y) || std::isnan(p.z) ||
                       std::isnan(p.u_wind) || std::isnan(p.v_wind) || std::isnan(p.w_wind) ||
                       std::isnan(p.up) || std::isnan(p.vp) || std::isnan(p.wp) ||
@@ -185,7 +185,7 @@ void LDM::checkParticleNaN(const std::string& location, int max_check) {
 
     if (nan_count > 0) {
         printf("[DEBUG] %s: NaN detected in %d particles! (Checked %d out of %d total)\n",
-               location.c_str(), nan_count, check_count, static_cast<int>(part.size()));
+               location.c_str(), nan_count, check_count, static_cast<int>(h_part.size()));
     } else {
         std::cout << Color::YELLOW << "[DEBUG] " << Color::RESET
                   << location << ": No NaN (checked first " << check_count << " particles)" << std::endl;

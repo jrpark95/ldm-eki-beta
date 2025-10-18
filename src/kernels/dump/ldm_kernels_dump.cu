@@ -1,6 +1,12 @@
 /**
  * @file ldm_kernels_dump.cu
  * @brief Implementation of particle advection with VTK output (single mode)
+ *
+ * @note This file implements GRID OUTPUT variant for single mode.
+ *       Physics identical to ldm_kernels_particle.cu with concentration accumulation.
+ *       Must be kept synchronized with particle kernel physics updates.
+ *       @see ldm_kernels_particle.cu for physics details.
+ *       @see ldm_kernels_dump_ens.cu for ensemble variant.
  */
 
 #include "ldm_kernels_dump.cuh"

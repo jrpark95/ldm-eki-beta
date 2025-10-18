@@ -391,10 +391,10 @@ private:
     // cudaArray* d_presArrayA2; //
     // cudaArray* d_presArrayB2; //
 
-    std::vector<Source> sources;  // Used in initialization
-    std::vector<float> decayConstants;  // Used in initialization
-    std::vector<float> drydepositionVelocity;  // Used in initialization
-    std::vector<Concentration> concentrations;  // Used in initialization
+    std::vector<Source> h_sources;  // Host source definitions (h_ prefix for consistency)
+    std::vector<float> h_decay_constants;  // Host decay constants (h_ + snake_case)
+    std::vector<float> h_dry_deposition_vel;  // Host dry deposition velocity (h_ + snake_case)
+    std::vector<Concentration> h_concentrations;  // Host concentration grids (h_ prefix for consistency)
 
     cudaTextureObject_t m_texUnisA0 = 0;
     cudaTextureObject_t m_texUnisA1 = 0;
@@ -553,7 +553,7 @@ public:
 
     };
 
-    std::vector<LDMpart> part;
+    std::vector<LDMpart> h_part;  // Host particle vector (h_ prefix for consistency)
     LDMpart* d_part = nullptr;
 
     // ldm_func.cuh

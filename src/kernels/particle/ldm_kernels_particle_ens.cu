@@ -1,6 +1,11 @@
 /**
  * @file ldm_kernels_particle_ens.cu
  * @brief Implementation of particle advection kernel (ensemble mode)
+ *
+ * @note This file implements physics for ENSEMBLE MODE simulations.
+ *       Physics identical to ldm_kernels_particle.cu but tracks ensemble_id.
+ *       Must be kept synchronized with single-mode physics updates.
+ *       @see ldm_kernels_particle.cu for detailed physics documentation.
  */
 
 #include "ldm_kernels_particle_ens.cuh"

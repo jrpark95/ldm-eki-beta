@@ -112,7 +112,7 @@ void LDM::runSimulation(){
     
     float currentTime = 0.0f;
     int threadsPerBlock = 256;
-    int blocks = (part.size() + threadsPerBlock - 1) / threadsPerBlock;
+    int blocks = (h_part.size() + threadsPerBlock - 1) / threadsPerBlock;
     int timestep = 0;
     float activationRatio = 0.0;
     float t0 = 0.0;
@@ -327,7 +327,7 @@ void LDM::runSimulation(){
  *
  * @warning Requires preloaded meteorological data - will error if not initialized
  * @warning VTK output disabled by default - set enable_vtk_output = true to enable
- * @warning Ensemble mode requires part.size() = nop * ensemble_size
+ * @warning Ensemble mode requires h_part.size() = nop * ensemble_size
  *
  * @see preloadAllEKIMeteorologicalData() for meteorological cache initialization
  * @see initializeEKIObservationSystem() for observation system setup
@@ -345,7 +345,7 @@ void LDM::runSimulation_eki(){
 
     float currentTime = 0.0f;
     int threadsPerBlock = 256;
-    int blocks = (part.size() + threadsPerBlock - 1) / threadsPerBlock;
+    int blocks = (h_part.size() + threadsPerBlock - 1) / threadsPerBlock;
     int timestep = 0;
     float activationRatio = 0.0;
     float t0 = 0.0;
@@ -359,11 +359,11 @@ void LDM::runSimulation_eki(){
               << Color::RESET;
     if (is_ensemble_mode) {
         std::cout << "  Mode           : " << Color::MAGENTA << "ENSEMBLE" << Color::RESET << std::endl;
-        std::cout << "  Particles      : " << Color::BOLD << part.size() << Color::RESET
+        std::cout << "  Particles      : " << Color::BOLD << h_part.size() << Color::RESET
                   << " (" << ensemble_size << " × " << ensemble_num_states << " states)" << std::endl;
     } else {
         std::cout << "  Mode           : SINGLE" << std::endl;
-        std::cout << "  Particles      : " << Color::BOLD << part.size() << Color::RESET << std::endl;
+        std::cout << "  Particles      : " << Color::BOLD << h_part.size() << Color::RESET << std::endl;
     }
     std::cout << "  GPU config     : " << blocks << " blocks × " << threadsPerBlock << " threads\n" << std::endl;
 
@@ -543,7 +543,7 @@ void LDM::runSimulation_eki(){
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
             // Ensemble mode: activate particles independently per ensemble
-            int total_particles = part.size();
+            int total_particles = h_part.size();
             int particles_per_ensemble = nop;  // Particles per ensemble (10000)
             updateParticleFlagsEnsemble<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, total_particles, particles_per_ensemble);
@@ -586,7 +586,7 @@ void LDM::runSimulation_eki(){
 
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
-            int total_particles = part.size();
+            int total_particles = h_part.size();
             advectParticlesEnsemble<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 d_surface_past,
@@ -635,7 +635,7 @@ void LDM::runSimulation_eki(){
                                 << "flag=" << (first_particle.flag ? "active" : "inactive") << ", "
                                 << "timeidx=" << first_particle.timeidx << ", "
                                 << "activationRatio=" << activationRatio << ", "
-                                << "maxActiveTimeidx=" << int(part.size() * activationRatio) << ", "
+                                << "maxActiveTimeidx=" << int(h_part.size() * activationRatio) << ", "
                                 << "u_wind=" << first_particle.u_wind << ", v_wind=" << first_particle.v_wind << ", w_wind=" << first_particle.w_wind << " m/s\n"
                                 << std::flush;
                 }
@@ -682,7 +682,7 @@ void LDM::runSimulation_eki(){
                 fprintf(stderr, "\rMode: ENSEMBLE │ Size: %d\033[K\n",
                         ensemble_size);
             } else {
-                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)part.size());
+                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)h_part.size());
             }
 
             // VTK status - show "Writing files..." if currently outputting VTK
@@ -793,7 +793,7 @@ void LDM::runSimulation_eki_dump(){
 
     float currentTime = 0.0f;
     int threadsPerBlock = 256;
-    int blocks = (part.size() + threadsPerBlock - 1) / threadsPerBlock;
+    int blocks = (h_part.size() + threadsPerBlock - 1) / threadsPerBlock;
     int timestep = 0;
     float activationRatio = 0.0;
     float t0 = 0.0;
@@ -807,11 +807,11 @@ void LDM::runSimulation_eki_dump(){
               << Color::RESET;
     if (is_ensemble_mode) {
         std::cout << "  Mode           : " << Color::MAGENTA << "ENSEMBLE" << Color::RESET << std::endl;
-        std::cout << "  Particles      : " << Color::BOLD << part.size() << Color::RESET
+        std::cout << "  Particles      : " << Color::BOLD << h_part.size() << Color::RESET
                   << " (" << ensemble_size << " × " << ensemble_num_states << " states)" << std::endl;
     } else {
         std::cout << "  Mode           : SINGLE" << std::endl;
-        std::cout << "  Particles      : " << Color::BOLD << part.size() << Color::RESET << std::endl;
+        std::cout << "  Particles      : " << Color::BOLD << h_part.size() << Color::RESET << std::endl;
     }
     std::cout << "  GPU config     : " << blocks << " blocks × " << threadsPerBlock << " threads\n" << std::endl;
 
@@ -991,7 +991,7 @@ void LDM::runSimulation_eki_dump(){
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
             // Ensemble mode: activate particles independently per ensemble
-            int total_particles = part.size();
+            int total_particles = h_part.size();
             int particles_per_ensemble = nop;  // Particles per ensemble (10000)
             updateParticleFlagsEnsemble<<<blocks, threadsPerBlock>>>
                 (d_part, activationRatio, total_particles, particles_per_ensemble);
@@ -1035,7 +1035,7 @@ void LDM::runSimulation_eki_dump(){
         // Use ensemble kernel for ensemble mode, regular kernel for single mode
         if (is_ensemble_mode) {
             // Ensemble mode: process all particles (d_nop × ensemble_size)
-            int total_particles = part.size();
+            int total_particles = h_part.size();
             advectParticlesEnsembleWithVTK<<<blocks, threadsPerBlock>>>
             (d_part, t0, PROCESS_INDEX, d_dryDep, d_wetDep, mesh.lon_count, mesh.lat_count,
                 d_surface_past,
@@ -1085,7 +1085,7 @@ void LDM::runSimulation_eki_dump(){
                                 << "flag=" << (first_particle.flag ? "active" : "inactive") << ", "
                                 << "timeidx=" << first_particle.timeidx << ", "
                                 << "activationRatio=" << activationRatio << ", "
-                                << "maxActiveTimeidx=" << int(part.size() * activationRatio) << ", "
+                                << "maxActiveTimeidx=" << int(h_part.size() * activationRatio) << ", "
                                 << "u_wind=" << first_particle.u_wind << ", v_wind=" << first_particle.v_wind << ", w_wind=" << first_particle.w_wind << " m/s\n"
                                 << std::flush;
                 }
@@ -1132,7 +1132,7 @@ void LDM::runSimulation_eki_dump(){
                 fprintf(stderr, "\rMode: ENSEMBLE │ Size: %d\033[K\n",
                         ensemble_size);
             } else {
-                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)part.size());
+                fprintf(stderr, "\rMode: SINGLE │ Particles: %d\033[K\n", (int)h_part.size());
             }
 
             // VTK status - show "Writing files..." if currently outputting VTK

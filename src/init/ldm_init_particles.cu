@@ -64,17 +64,17 @@
  * @date 2025
  *****************************************************************************/
 void LDM::initializeParticles(){
-    if (concentrations.empty()) {
+    if (h_concentrations.empty()) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET << "No concentrations data loaded for particle initialization" << std::endl;
         return;
     }
 
-    if (sources.empty()) {
+    if (h_sources.empty()) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET << "No sources data loaded for particle initialization" << std::endl;
         return;
     }
 
-    int partPerConc = nop / concentrations.size();
+    int partPerConc = nop / h_concentrations.size();
 
     std::random_device rd;
     auto now = std::chrono::high_resolution_clock::now();
@@ -83,20 +83,20 @@ void LDM::initializeParticles(){
     std::normal_distribution<float> dist(g_mpi.particleSizes[PROCESS_INDEX], g_mpi.sizeStandardDeviations[PROCESS_INDEX]);
 
     int particle_count = 0;
-    for (const auto& conc : concentrations) {
-        if (conc.location - 1 >= sources.size()) {
-            std::cerr << Color::RED << "[ERROR] " << Color::RESET << "Invalid source location index: " << conc.location << " (max: " << sources.size() << ")" << std::endl;
+    for (const auto& conc : h_concentrations) {
+        if (conc.location - 1 >= h_sources.size()) {
+            std::cerr << Color::RED << "[ERROR] " << Color::RESET << "Invalid source location index: " << conc.location << " (max: " << h_sources.size() << ")" << std::endl;
             continue;
         }
 
         for (int i = 0; i < partPerConc; ++i) {
-            float x = (sources[conc.location - 1].lon + 179.0) / 0.5;
-            float y = (sources[conc.location - 1].lat + 90) / 0.5;
-            float z = sources[conc.location - 1].height;
+            float x = (h_sources[conc.location - 1].lon + 179.0) / 0.5;
+            float y = (h_sources[conc.location - 1].lat + 90) / 0.5;
+            float z = h_sources[conc.location - 1].height;
 
             float random_radius = dist(gen);
 
-            part.push_back(LDMpart(x, y, z,
+            h_part.push_back(LDMpart(x, y, z,
                                    g_mpi.decayConstants[PROCESS_INDEX],
                                    conc.value,
                                    g_mpi.depositionVelocities[PROCESS_INDEX],
@@ -105,7 +105,7 @@ void LDM::initializeParticles(){
                                    i + 1));
 
             // Initialize multi-nuclide concentrations for the newly created particle
-            LDMpart& current_particle = part.back();
+            LDMpart& current_particle = h_part.back();
 
             // Get nuclide configuration
             NuclideConfig* nucConfig = NuclideConfig::getInstance();
@@ -128,7 +128,7 @@ void LDM::initializeParticles(){
         }
     }
 
-    std::sort(part.begin(), part.end(), [](const LDMpart& a, const LDMpart& b) {
+    std::sort(h_part.begin(), h_part.end(), [](const LDMpart& a, const LDMpart& b) {
         return a.timeidx < b.timeidx;
     });
 }
@@ -187,7 +187,7 @@ void LDM::initializeParticlesEKI(){
         return;
     }
 
-    if (sources.empty()) {
+    if (h_sources.empty()) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET << "No sources data loaded for EKI particle initialization" << std::endl;
         return;
     }
@@ -209,13 +209,13 @@ void LDM::initializeParticlesEKI(){
     int particle_count = 0;
 
     // Clear existing particles
-    part.clear();
+    h_part.clear();
 
     for (int i = 0; i < nop; ++i) {
         // Use first source location (same as original)
-        float x = (sources[0].lon + 179.0) / 0.5;
-        float y = (sources[0].lat + 90) / 0.5;
-        float z = sources[0].height;
+        float x = (h_sources[0].lon + 179.0) / 0.5;
+        float y = (h_sources[0].lat + 90) / 0.5;
+        float z = h_sources[0].height;
 
         float random_radius = dist(gen);
 
@@ -224,7 +224,7 @@ void LDM::initializeParticlesEKI(){
 
         // For single mode EKI: set all particles to timeidx=1 so they activate immediately
         // (different from ensemble mode where particles activate at different times)
-        part.push_back(LDMpart(x, y, z,
+        h_part.push_back(LDMpart(x, y, z,
                                g_mpi.decayConstants[PROCESS_INDEX],
                                emission_value,
                                g_mpi.depositionVelocities[PROCESS_INDEX],
@@ -233,7 +233,7 @@ void LDM::initializeParticlesEKI(){
                                i+1));  // Changed from (i+1) to (1) for immediate activation
 
         // Initialize multi-nuclide concentrations for the newly created particle
-        LDMpart& current_particle = part.back();
+        LDMpart& current_particle = h_part.back();
 
         // Get nuclide configuration
         NuclideConfig* nucConfig = NuclideConfig::getInstance();
@@ -266,10 +266,10 @@ void LDM::initializeParticlesEKI(){
     }
 
     std::cout << Color::GREEN << "  ✓ " << Color::RESET
-              << "Initialized " << Color::BOLD << part.size() << Color::RESET
+              << "Initialized " << Color::BOLD << h_part.size() << Color::RESET
               << " particles" << std::endl;
 
-    std::sort(part.begin(), part.end(), [](const LDMpart& a, const LDMpart& b) {
+    std::sort(h_part.begin(), h_part.end(), [](const LDMpart& a, const LDMpart& b) {
         return a.timeidx < b.timeidx;
     });
 }
@@ -347,7 +347,7 @@ void LDM::initializeParticlesEKI_AllEnsembles(float* ensemble_states, int num_en
     // EKI ensemble mode: Initialize particles for all ensemble members in parallel
     // ensemble_states: [num_ensembles × num_timesteps] matrix (e.g., 100×24)
 
-    if (sources.empty()) {
+    if (h_sources.empty()) {
         std::cerr << Color::RED << "[ERROR] " << Color::RESET << "No sources data loaded for EKI ensemble initialization" << std::endl;
         return;
     }
@@ -369,8 +369,8 @@ void LDM::initializeParticlesEKI_AllEnsembles(float* ensemble_states, int num_en
     std::normal_distribution<float> dist(g_mpi.particleSizes[PROCESS_INDEX], g_mpi.sizeStandardDeviations[PROCESS_INDEX]);
 
     // Clear and reserve memory
-    part.clear();
-    part.reserve(total_particles);
+    h_part.clear();
+    h_part.reserve(total_particles);
 
     // Generate particles for each ensemble
     for (int ens = 0; ens < num_ensembles; ens++) {
@@ -381,9 +381,9 @@ void LDM::initializeParticlesEKI_AllEnsembles(float* ensemble_states, int num_en
             // Generate particles for this timestep
             for (int p = 0; p < particles_per_timestep; p++) {
                 // Source location
-                float x = (sources[0].lon + 179.0) / 0.5;
-                float y = (sources[0].lat + 90) / 0.5;
-                float z = sources[0].height;
+                float x = (h_sources[0].lon + 179.0) / 0.5;
+                float y = (h_sources[0].lat + 90) / 0.5;
+                float z = h_sources[0].height;
                 float random_radius = dist(gen);
 
                 // timeidx: Local particle ID within each ensemble (1~particles_per_ensemble)
@@ -415,7 +415,7 @@ void LDM::initializeParticlesEKI_AllEnsembles(float* ensemble_states, int num_en
                     }
                 }
 
-                part.push_back(particle);
+                h_part.push_back(particle);
             }
         }
 
@@ -427,10 +427,10 @@ void LDM::initializeParticlesEKI_AllEnsembles(float* ensemble_states, int num_en
     }
 
     std::cout << "\r" << Color::GREEN << "  ✓ " << Color::RESET
-              << "Created " << Color::BOLD << part.size() << Color::RESET << " particles";
+              << "Created " << Color::BOLD << h_part.size() << Color::RESET << " particles";
 
     // CRITICAL: Sort by ensemble_id (independent simulations)
-    std::sort(part.begin(), part.end(), [](const LDMpart& a, const LDMpart& b) {
+    std::sort(h_part.begin(), h_part.end(), [](const LDMpart& a, const LDMpart& b) {
         if (a.ensemble_id != b.ensemble_id)
             return a.ensemble_id < b.ensemble_id;
         else

@@ -1,6 +1,12 @@
 /**
  * @file ldm_kernels_dump_ens.cu
  * @brief Implementation of particle advection with VTK output (ensemble mode)
+ *
+ * @note This file implements GRID OUTPUT variant for ensemble mode.
+ *       Combines ensemble tracking from ldm_kernels_particle_ens.cu with
+ *       concentration accumulation from ldm_kernels_dump.cu.
+ *       Must be synchronized with both parent kernel variants.
+ *       @see ldm_kernels_particle_ens.cu, ldm_kernels_dump.cu
  */
 
 #include "ldm_kernels_dump_ens.cuh"
