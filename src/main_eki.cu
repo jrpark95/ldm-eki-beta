@@ -47,6 +47,9 @@
 #include <random>
 #include <numeric>
 
+// System information headers
+#include <sys/utsname.h>  // For uname() - OS information
+
 // ===========================================================================
 // Global Variables
 // ===========================================================================
@@ -254,8 +257,56 @@ int main(int argc, char** argv) {
         *g_log_file << "\n========================================\n";
         *g_log_file << "LDM-EKI Detailed Simulation Log\n";
         *g_log_file << "========================================\n";
-        *g_log_file << "Start time: " << std::chrono::system_clock::now().time_since_epoch().count() << "\n";
-        *g_log_file << "Working directory: " << getenv("PWD") << "\n";
+
+        // Timestamp
+        auto now = std::chrono::system_clock::now();
+        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+        char timestamp[100];
+        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
+        *g_log_file << "Start time: " << timestamp << "\n";
+
+        // Working directory
+        const char* pwd = getenv("PWD");
+        *g_log_file << "Working directory: " << (pwd ? pwd : "unknown") << "\n";
+
+        // Operating system information
+        struct utsname sys_info;
+        if (uname(&sys_info) == 0) {
+            *g_log_file << "Operating system: " << sys_info.sysname << " "
+                       << sys_info.release << " " << sys_info.machine << "\n";
+        }
+
+        // CUDA runtime version
+        int cuda_runtime_version = 0;
+        cudaError_t err = cudaRuntimeGetVersion(&cuda_runtime_version);
+        if (err == cudaSuccess) {
+            int major = cuda_runtime_version / 1000;
+            int minor = (cuda_runtime_version % 1000) / 10;
+            *g_log_file << "CUDA runtime version: " << major << "." << minor << "\n";
+        }
+
+        // CUDA driver version
+        int cuda_driver_version = 0;
+        err = cudaDriverGetVersion(&cuda_driver_version);
+        if (err == cudaSuccess) {
+            int major = cuda_driver_version / 1000;
+            int minor = (cuda_driver_version % 1000) / 10;
+            *g_log_file << "CUDA driver version: " << major << "." << minor << "\n";
+        }
+
+        // GPU device information
+        int device_count = 0;
+        err = cudaGetDeviceCount(&device_count);
+        if (err == cudaSuccess && device_count > 0) {
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, 0);  // Use device 0
+            *g_log_file << "GPU device: " << prop.name << "\n";
+            *g_log_file << "  Compute capability: " << prop.major << "." << prop.minor << "\n";
+            *g_log_file << "  Total global memory: "
+                       << std::fixed << std::setprecision(2)
+                       << (prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0)) << " GB\n";
+        }
+
         *g_log_file << "========================================\n\n";
     }
 
@@ -937,6 +988,17 @@ int main(int argc, char** argv) {
     std::cout << "    - Debug data extraction from NPZ archive" << std::endl;
     std::cout << "    - Input configuration summary" << std::endl;
     std::cout << "  Output: " << Color::BOLD << "output/detailed_analysis/"
+              << Color::RESET << "\n" << std::endl;
+
+    // ========================================================================
+    // Optional: VTK Particle Distribution Visualization
+    // ========================================================================
+    std::cout << Color::CYAN << "[INFO] " << Color::RESET
+              << "To visualize particle distribution, run:" << std::endl;
+    std::cout << "  " << Color::BOLD << "python3 util/visualize_vtk.py"
+              << Color::RESET << std::endl;
+    std::cout << "  This creates animated GIF from VTK particle data" << std::endl;
+    std::cout << "  Output: " << Color::BOLD << "output/results/particle_distribution_{prior|ensemble}.gif"
               << Color::RESET << "\n" << std::endl;
 
     return 0;
