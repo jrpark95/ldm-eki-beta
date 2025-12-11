@@ -1,0 +1,270 @@
+================================================================================
+                    LDM-EKI 오류 처리 및 검증 기능 예시
+                        안전기술보고서 수록용
+================================================================================
+
+본 문서는 LDM-EKI 시스템의 입력 검증 및 오류 처리 기능을 시연하기 위한
+실제 오류 메시지 예시를 포함합니다.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. 개요
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+LDM-EKI 시스템은 입력 파라미터에 대한 포괄적인 검증을 수행하며, 잘못된
+입력이 감지되면 명확한 오류 메시지와 함께 안전하게 종료됩니다.
+
+다음은 의도적으로 잘못된 입력을 제공했을 때 시스템이 보고하는 오류 메시지의
+실제 예시입니다.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. 오류 케이스 및 시스템 응답
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+--------------------------------------------------------------------------------
+2.1 케이스 1: 음수 파티클 수
+--------------------------------------------------------------------------------
+
+[입력 파일 내용]
+  파일: input/simulation.conf
+  잘못된 파라미터: total_particles: -100000
+
+[시스템 출력]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  LDM-EKI: Source Term Inversion with Ensemble Kalman Methods
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[SYSTEM] Creating output directories... done
+[SYSTEM] Logging to logs/ldm_eki_simulation.log
+
+Loading Configuration
+[CONFIG] Loading simulation.conf...
+[INPUT ERROR] Invalid total_particles: -100000
+
+  Problem:
+    Particle count must be positive.
+
+  Required value:
+    total_particles >= 100 (minimum for meaningful statistics)
+
+  Recommended range:
+    - Quick test: 1,000 particles
+    - Standard: 10,000 particles (good balance)
+    - High quality: 100,000 particles
+    - Production: 1,000,000 particles (requires GPU)
+
+  Fix in: input/simulation.conf
+
+[분석]
+- 오류 감지 위치: 설정 파일 로딩 단계 (src/init/ldm_init_config.cu)
+- 오류 유형: 파라미터 범위 검증 실패
+- 시스템 동작: 초기화 전 안전하게 종료
+- 사용자 지원: 권장 값 범위 제시
+
+
+--------------------------------------------------------------------------------
+2.2 케이스 2: 0 파티클
+--------------------------------------------------------------------------------
+
+[입력 파일 내용]
+  파일: input/simulation.conf
+  잘못된 파라미터: total_particles: 0
+
+[시스템 출력]
+[CONFIG] Loading simulation.conf...
+[INPUT ERROR] Invalid total_particles: 0
+
+  Problem:
+    Particle count must be positive.
+
+  Required value:
+    total_particles >= 100 (minimum for meaningful statistics)
+
+  Recommended range:
+    - Quick test: 1,000 particles
+    - Standard: 10,000 particles (good balance)
+    - High quality: 100,000 particles
+    - Production: 1,000,000 particles (requires GPU)
+
+  Fix in: input/simulation.conf
+
+[분석]
+- 오류 감지 위치: 설정 파일 로딩 단계
+- 오류 유형: 물리적으로 불가능한 값 (0 파티클)
+- 시스템 동작: 메모리 할당 전 검증으로 자원 낭비 방지
+- 사용자 지원: 최소값 및 권장 범위 안내
+
+
+--------------------------------------------------------------------------------
+2.3 케이스 3: 음수 타임스텝
+--------------------------------------------------------------------------------
+
+[입력 파일 내용]
+  파일: input/simulation.conf
+  잘못된 파라미터: time_step: -100
+
+[시스템 출력]
+[CONFIG] Loading simulation.conf...
+[INPUT ERROR] Invalid time_step: -100 seconds
+
+  Problem:
+    Time step must be positive.
+
+  Required value:
+    time_step > 0 (in seconds)
+
+  Recommended range:
+    - High accuracy: 10-50 seconds
+    - Balanced: 50-100 seconds (recommended)
+    - Fast: 100-300 seconds (less accurate)
+
+  Fix in: input/simulation.conf
+
+[분석]
+- 오류 감지 위치: 설정 파일 로딩 단계
+- 오류 유형: 물리적으로 불가능한 값 (시간 역행)
+- 시스템 동작: 시뮬레이션 루프 진입 전 검증
+- 사용자 지원: 정확도별 권장 값 제시
+
+
+--------------------------------------------------------------------------------
+2.4 케이스 4: 리셉터 개수 불일치
+--------------------------------------------------------------------------------
+
+[입력 파일 내용]
+  파일: input/receptor.conf
+  잘못된 설정:
+    NUM_RECEPTORS: 3
+    RECEPTOR_LOCATIONS: (실제로는 5개 제공)
+      35.6500 129.6000
+      35.6000 129.8000
+      35.5000 129.9000
+      35.7000 129.4000
+      35.5500 129.7000
+
+[시스템 출력]
+[SYSTEM] Loading receptor settings from input/receptor.conf...
+[INPUT ERROR] Receptor count mismatch
+
+  Problem:
+    NUM_RECEPTORS=3 but 5 receptor locations defined
+
+  Solution:
+    Ensure RECEPTOR_LOCATIONS has exactly 3 lines
+    Format: latitude longitude (one per line)
+
+  Fix in: input/receptor.conf
+
+[분석]
+- 오류 감지 위치: 리셉터 설정 로딩 단계
+- 오류 유형: 데이터 일관성 검증 실패
+- 시스템 동작: 배열 범위 초과 방지
+- 사용자 지원: 정확한 포맷 안내
+
+
+--------------------------------------------------------------------------------
+2.5 케이스 5: 음수 리셉터 반경
+--------------------------------------------------------------------------------
+
+[입력 파일 내용]
+  파일: input/receptor.conf
+  잘못된 파라미터: RECEPTOR_CAPTURE_RADIUS: -0.025
+
+[시스템 출력]
+[SYSTEM] Loading receptor settings from input/receptor.conf...
+[INPUT ERROR] Invalid RECEPTOR_CAPTURE_RADIUS: -0.025°
+
+  Problem:
+    Capture radius must be positive.
+
+  Required value:
+    RECEPTOR_CAPTURE_RADIUS > 0.0 (degrees)
+
+  Typical values:
+    - Fine resolution:   0.01° (~1 km)
+    - Standard:          0.025° (~2.5 km)
+    - Coarse:            0.05° (~5 km)
+
+  Fix in: input/receptor.conf
+
+[분석]
+- 오류 감지 위치: 리셉터 설정 로딩 단계
+- 오류 유형: 기하학적으로 불가능한 값 (음수 반경)
+- 시스템 동작: 거리 계산 전 검증
+- 사용자 지원: 해상도별 전형적인 값 제시
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. 오류 처리 메커니즘의 특징
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3.1 계층적 검증 구조
+
+   단계 1: 설정 파일 구문 분석
+      └─> 단계 2: 파라미터 범위 검증
+            └─> 단계 3: 데이터 일관성 검증
+                  └─> 단계 4: 물리적 타당성 검증
+
+3.2 명확한 오류 메시지 구조
+
+   모든 오류 메시지는 다음 정보를 포함:
+   - 문제점 (Problem): 무엇이 잘못되었는지
+   - 요구사항 (Required value): 올바른 값의 조건
+   - 권장사항 (Recommended range): 일반적인 사용 사례별 권장 값
+   - 수정 위치 (Fix in): 어느 파일을 수정해야 하는지
+
+3.3 안전한 종료
+
+   - 모든 오류는 시스템 초기화 단계에서 검출
+   - GPU 메모리 할당 및 커널 실행 전에 종료
+   - 자원 누수 없이 정상 종료
+
+3.4 사용자 친화적 가이던스
+
+   - 단순히 오류를 보고하는 것이 아니라 해결 방법 제시
+   - 일반적인 사용 사례에 맞는 권장 값 제공
+   - 물리적 의미와 단위 명시
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. 재현 방법
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+위 오류 예시들은 다음 방법으로 재현할 수 있습니다:
+
+1. 입력 파일 백업 확인
+   $ ls input/backup/
+   receptor.conf.bak  simulation.conf.bak
+
+2. 특정 오류 케이스 복사
+   $ cp input/error_examples/case1_negative_particles/*.conf input/
+
+3. 프로그램 실행
+   $ ./ldm-eki
+
+4. 오류 메시지 확인 후 원본 복구
+   $ cp input/backup/receptor.conf.bak input/receptor.conf
+   $ cp input/backup/simulation.conf.bak input/simulation.conf
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. 결론
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+LDM-EKI 시스템의 입력 검증 메커니즘은 다음을 보장합니다:
+
+✓ 포괄적인 입력 검증: 모든 파라미터가 물리적으로 타당한지 확인
+✓ 조기 오류 감지: 시스템 자원 할당 전 검증으로 안전성 확보
+✓ 명확한 진단: 사용자가 문제를 쉽게 이해하고 해결할 수 있도록 지원
+✓ 안전한 종료: 오류 발생 시 자원 누수 없이 정상 종료
+
+이러한 특징은 연구용 코드에서 흔히 발생하는 "garbage in, garbage out"
+문제를 방지하고, 사용자가 신뢰할 수 있는 시뮬레이션 결과를 얻을 수 있도록
+합니다.
+
+
+================================================================================
+                            문서 작성일: 2025-10-19
+                        LDM-EKI v1.0 기준
+================================================================================
