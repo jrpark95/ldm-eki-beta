@@ -854,32 +854,126 @@ __global__ void advectParticlesEnsemble(
             //     printf("[GPU] RADDECAY disabled: skipping T matrix\n");
             // }
 
+        // =========================================================================
+        // DEPOSITION GRID ACCUMULATION (FLEXPART-style uniform kernel)
+        // =========================================================================
+        // Distribute deposited mass to surrounding grid points using bilinear
+        // interpolation weights. This ensures mass conservation while smoothly
+        // distributing deposition across the output grid.
+        //
+        // Reference: Stohl et al., FLEXPART drydepokernel/wetdepokernel
+        // =========================================================================
 
-            if (ks.wetdep && wet_removal > 0.0f) {
-                #pragma unroll
-                for (int i = 0; i < N_NUCLIDES; ++i) {
-                    float c = p.concentrations[i];
-                    if (c > 0.0f) p.concentrations[i] = c * (1.0f - wet_removal);
-                }
-            }
-
+        // Calculate total mass to be deposited (sum over all nuclides)
+        float dry_deposit_total = 0.0f;
+        float wet_deposit_total = 0.0f;
 
         if (ks.drydep && prob_dry > 0.0f) {
-            // if (idx == 0 && tstep <= 3) {
-            //     printf("[GPU] DRYDEP applying: prob_dry=%.6f\n", prob_dry);
-            // }
-            
             #pragma unroll
             for (int i = 0; i < N_NUCLIDES; ++i) {
                 float c = p.concentrations[i];
-                if (c > 0.0f) p.concentrations[i] = c * (1.0f - prob_dry);
+                if (c > 0.0f) {
+                    float deposited = c * prob_dry;
+                    dry_deposit_total += deposited;
+                    p.concentrations[i] = c - deposited;  // Remove from particle
+                }
             }
-            
-        } 
-        //else if (ks.drydep && idx == 0 && tstep <= 3) {
-        //     printf("[GPU] DRYDEP not applying: prob_dry=%.6f\n", prob_dry);
-        // }
+        }
 
+        if (ks.wetdep && wet_removal > 0.0f) {
+            #pragma unroll
+            for (int i = 0; i < N_NUCLIDES; ++i) {
+                float c = p.concentrations[i];
+                if (c > 0.0f) {
+                    float deposited = c * wet_removal;
+                    wet_deposit_total += deposited;
+                    p.concentrations[i] = c - deposited;  // Remove from particle
+                }
+            }
+        }
+
+        // Accumulate deposition to grid using FLEXPART-style uniform kernel
+        if ((dry_deposit_total > 0.0f || wet_deposit_total > 0.0f) &&
+            d_dryDep != nullptr && d_wetDep != nullptr) {
+
+            // Convert particle position from GFS grid to output mesh coordinates
+            // GFS coordinates: x = (lon + 179) / 0.5, y = (lat + 90) / 0.5
+            float particle_lon = p.x * 0.5f - 179.0f;
+            float particle_lat = p.y * 0.5f - 90.0f;
+
+            // Transform to output mesh indices
+            float xl = (particle_lon - ks.grid_start_lon) / ks.grid_lon_step;
+            float yl = (particle_lat - ks.grid_start_lat) / ks.grid_lat_step;
+
+            int ix = static_cast<int>(xl);
+            int jy = static_cast<int>(yl);
+
+            // Distance to cell border (fractional position within cell)
+            float ddx = xl - static_cast<float>(ix);
+            float ddy = yl - static_cast<float>(jy);
+
+            // FLEXPART-style neighbor selection and weight calculation
+            // If ddx > 0.5, use right neighbor; otherwise use left neighbor
+            int ixp, jyp;
+            float wx, wy;
+
+            if (ddx > 0.5f) {
+                ixp = ix + 1;
+                wx = 1.5f - ddx;
+            } else {
+                ixp = ix - 1;
+                wx = 0.5f + ddx;
+            }
+
+            if (ddy > 0.5f) {
+                jyp = jy + 1;
+                wy = 1.5f - ddy;
+            } else {
+                jyp = jy - 1;
+                wy = 0.5f + ddy;
+            }
+
+            // Calculate weights for four grid points
+            // w00 = wx * wy          (ix, jy)
+            // w01 = wx * (1-wy)      (ix, jyp)
+            // w10 = (1-wx) * wy      (ixp, jy)
+            // w11 = (1-wx) * (1-wy)  (ixp, jyp)
+            float w00 = wx * wy;
+            float w01 = wx * (1.0f - wy);
+            float w10 = (1.0f - wx) * wy;
+            float w11 = (1.0f - wx) * (1.0f - wy);
+
+            // Accumulate to grid using atomicAdd (thread-safe)
+            // Grid layout: row-major [lat][lon] -> index = jy * mesh_nx + ix
+
+            // Point (ix, jy)
+            if (ix >= 0 && ix < mesh_nx && jy >= 0 && jy < mesh_ny) {
+                int grid_idx = jy * mesh_nx + ix;
+                if (dry_deposit_total > 0.0f) atomicAdd(&d_dryDep[grid_idx], dry_deposit_total * w00);
+                if (wet_deposit_total > 0.0f) atomicAdd(&d_wetDep[grid_idx], wet_deposit_total * w00);
+            }
+
+            // Point (ixp, jyp)
+            if (ixp >= 0 && ixp < mesh_nx && jyp >= 0 && jyp < mesh_ny) {
+                int grid_idx = jyp * mesh_nx + ixp;
+                if (dry_deposit_total > 0.0f) atomicAdd(&d_dryDep[grid_idx], dry_deposit_total * w11);
+                if (wet_deposit_total > 0.0f) atomicAdd(&d_wetDep[grid_idx], wet_deposit_total * w11);
+            }
+
+            // Point (ixp, jy)
+            if (ixp >= 0 && ixp < mesh_nx && jy >= 0 && jy < mesh_ny) {
+                int grid_idx = jy * mesh_nx + ixp;
+                if (dry_deposit_total > 0.0f) atomicAdd(&d_dryDep[grid_idx], dry_deposit_total * w10);
+                if (wet_deposit_total > 0.0f) atomicAdd(&d_wetDep[grid_idx], wet_deposit_total * w10);
+            }
+
+            // Point (ix, jyp)
+            if (ix >= 0 && ix < mesh_nx && jyp >= 0 && jyp < mesh_ny) {
+                int grid_idx = jyp * mesh_nx + ix;
+                if (dry_deposit_total > 0.0f) atomicAdd(&d_dryDep[grid_idx], dry_deposit_total * w01);
+                if (wet_deposit_total > 0.0f) atomicAdd(&d_wetDep[grid_idx], wet_deposit_total * w01);
+            }
+        }
 
     float total = 0.0f;
     #pragma unroll

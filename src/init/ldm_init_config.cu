@@ -73,7 +73,7 @@
  *****************************************************************************/
 void LDM::loadSimulationConfiguration(){
 
-    if (!g_config.loadConfig("input/setting.txt")) {
+    if (!g_config.loadConfig("input/ldm/setting.txt")) {
         std::cerr << "Failed to load configuration file" << std::endl;
         exit(1);
     }
@@ -130,7 +130,7 @@ void LDM::loadSimulationConfiguration(){
     }
 
     // Open source configuration file
-    std::string source_file_path = g_config.getString("input_base_path", "./input/") + "source.txt";
+    std::string source_file_path = g_config.getString("input_base_path", "./input/ldm/") + "source.txt";
     sourceFile = fopen(source_file_path.c_str(), "r");
 
     if (!sourceFile){

@@ -301,3 +301,130 @@ void LDM::outputParticlesBinaryMPI_ens(int timestep){
         vtkFile.close();
     } // End of parallel ensemble loop
 }
+
+// ============================================================================
+// Deposition Grid VTK Output (2D RECTILINEAR_GRID)
+// ============================================================================
+
+/**
+ * @brief Output deposition grid data as VTK rectilinear grid file
+ *
+ * @details Creates VTK files for dry/wet deposition data accumulated on the
+ *          output mesh. The data is stored as a 2D rectilinear grid with
+ *          POINT_DATA scalar field representing deposition amount [Bq/m²].
+ *
+ * @algorithm
+ * 1. Create output directory (output/deposition_dry or output/deposition_wet)
+ * 2. Generate filename with timestep
+ * 3. Write VTK header (version, format, dataset type)
+ * 4. Write X_COORDINATES (longitude values)
+ * 5. Write Y_COORDINATES (latitude values)
+ * 6. Write Z_COORDINATES (single value: 0.0)
+ * 7. Write POINT_DATA (deposition values)
+ *
+ * @param[in] h_deposition  Host array of deposition values (lat × lon layout)
+ * @param[in] mesh_nx       Number of grid points in x (longitude) direction
+ * @param[in] mesh_ny       Number of grid points in y (latitude) direction
+ * @param[in] start_lon     Starting longitude [degrees]
+ * @param[in] start_lat     Starting latitude [degrees]
+ * @param[in] lon_step      Longitude resolution [degrees]
+ * @param[in] lat_step      Latitude resolution [degrees]
+ * @param[in] timestep      Current simulation timestep
+ * @param[in] isDry         True for dry deposition, false for wet deposition
+ *
+ * @note Uses big-endian binary format (VTK standard)
+ * @note Grid layout assumes row-major order: [lat][lon]
+ */
+void LDM::outputDepositionVTK(
+    const float* h_deposition,
+    int mesh_nx, int mesh_ny,
+    float start_lon, float start_lat,
+    float lon_step, float lat_step,
+    int timestep, bool isDry)
+{
+    // Step 1: Create output directory
+    std::string path = isDry ? "output/deposition_dry" : "output/deposition_wet";
+
+    #ifdef _WIN32
+        _mkdir(path.c_str());
+    #else
+        mkdir(path.c_str(), 0777);
+    #endif
+
+    // Step 2: Generate filename
+    std::ostringstream filenameStream;
+    #ifdef _WIN32
+        filenameStream << path << "\\"
+                       << (isDry ? "dry_" : "wet_")
+                       << std::setfill('0') << std::setw(5) << timestep
+                       << ".vtk";
+    #else
+        filenameStream << path << "/"
+                       << (isDry ? "dry_" : "wet_")
+                       << std::setfill('0') << std::setw(5) << timestep
+                       << ".vtk";
+    #endif
+    std::string filename = filenameStream.str();
+
+    // Step 3: Open file for binary writing
+    std::ofstream outFile(filename, std::ios::binary);
+    if (!outFile.is_open()) {
+        std::cerr << "Cannot open file for writing: " << filename << std::endl;
+        return;
+    }
+
+    // Step 4: Write VTK header
+    outFile << "# vtk DataFile Version 4.2\n";
+    outFile << (isDry ? "Dry deposition [Bq/m2]\n" : "Wet deposition [Bq/m2]\n");
+    outFile << "BINARY\n";
+    outFile << "DATASET RECTILINEAR_GRID\n";
+
+    // Grid dimensions (nx = lon, ny = lat, nz = 1 for 2D)
+    int nx = mesh_nx;
+    int ny = mesh_ny;
+    int nz = 1;
+    outFile << "DIMENSIONS " << nx << " " << ny << " " << nz << "\n";
+
+    // Step 5: Write X_COORDINATES (longitudes)
+    outFile << "X_COORDINATES " << nx << " float\n";
+    for (int j = 0; j < nx; j++) {
+        float lon = start_lon + j * lon_step;
+        swapByteOrder(lon);
+        outFile.write(reinterpret_cast<char*>(&lon), sizeof(float));
+    }
+
+    // Step 6: Write Y_COORDINATES (latitudes)
+    outFile << "\nY_COORDINATES " << ny << " float\n";
+    for (int i = 0; i < ny; i++) {
+        float lat = start_lat + i * lat_step;
+        swapByteOrder(lat);
+        outFile.write(reinterpret_cast<char*>(&lat), sizeof(float));
+    }
+
+    // Step 7: Write Z_COORDINATES (single value for 2D grid)
+    outFile << "\nZ_COORDINATES 1 float\n";
+    {
+        float zVal = 0.0f;
+        swapByteOrder(zVal);
+        outFile.write(reinterpret_cast<char*>(&zVal), sizeof(float));
+    }
+    outFile << "\n";
+
+    // Step 8: Write POINT_DATA (deposition values)
+    int nPoints = nx * ny * nz;
+    outFile << "POINT_DATA " << nPoints << "\n";
+    outFile << "SCALARS deposit float 1\n";
+    outFile << "LOOKUP_TABLE default\n";
+
+    // Write data in row-major order [lat][lon]
+    for (int i = 0; i < ny; i++) {
+        for (int j = 0; j < nx; j++) {
+            int idx = i * nx + j;  // Row-major index
+            float val = h_deposition[idx];
+            swapByteOrder(val);
+            outFile.write(reinterpret_cast<char*>(&val), sizeof(float));
+        }
+    }
+
+    outFile.close();
+}

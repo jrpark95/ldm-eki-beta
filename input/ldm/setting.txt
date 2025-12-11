@@ -1,0 +1,14 @@
+# SIMULATION SETTINGS #
+Time_end(s): 21600.0
+dt(s): 100.0
+Plot_output_freq: 1
+Total_number_of_particle: 30000
+
+# Calculation Mode for Sigma (Rural = 1, Urban = 0)
+Rural/Urban: 1
+
+# Stability Category (PG = 1, BMP = 0)
+Pasquill-Gifford/Briggs-McElroy-Pooler: 1
+
+# Meteorological Data (GFS = 1, LDAPS = 0)
+Data: 1

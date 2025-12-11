@@ -1,0 +1,7 @@
+Sheilding Factor	Normal	Sheltering	Evacuation
+Cloudshine			0.775	0.60		0.95
+Inhalation			0.46	0.251		0.98
+Skin_protection		0.46	0.251		0.98
+Groundshine			0.196	0.0946		0.359
+			Cloudshine		Groundshine
+IERNet	1					0.7

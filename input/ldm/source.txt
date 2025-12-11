@@ -1,0 +1,26 @@
+# SOURCE INFORMATION #
+
+# Source coordinates (Lon(deg180), Lat(deg180), Height(m))
+#
+[SOURCE]
+129.4761 35.7131 100.0
+
+# Source term information (Source term number, Decay const(/s), Deposition velocity(m/s))
+#
+[SOURCE_TERM]
+# (1: Cs-137)
+1 1.00281e-6 1.0e-3
+# (2: Particulate Iodine)
+2 1.00281e-6 1.0e-3
+# (3: Elemental Iodine)
+3 1.00281e-6 1.0e-2
+# (4: Organic Iodine)
+4 1.00281e-6 5.0e-4
+
+# Releasing cases (Source num, Source term num, Concentration(Bq/s))
+#
+[RELEASE_CASES]
+1 1 1.00e-4
+1 2 1.00e-4
+1 3 1.00e-4
+1 4 1.00e-4

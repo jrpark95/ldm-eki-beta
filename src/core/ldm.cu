@@ -417,3 +417,99 @@ GridConfig loadGridConfig() {
 
     return config;
 }
+
+/******************************************************************************
+ * @brief Load deposition mesh configuration from input/ldm/mesh.conf
+ *
+ * @details Parses the mesh configuration file for LDM-only mode deposition
+ *          output grid. The file uses simple key=value format.
+ *
+ * @return GridConfig structure with mesh boundaries and resolution
+ *
+ * @note This is separate from loadGridConfig() which is for EKI receptor grid
+ * @note Default values center around source at 129.4761°E, 35.7131°N
+ *****************************************************************************/
+GridConfig loadMeshConfig() {
+    GridConfig config;
+
+    // Default values for LDM mode (centered around source location)
+    // Source: 129.4761°E, 35.7131°N
+    config.start_lon = 124.0f;   // 5.5° west of source
+    config.end_lon = 135.0f;     // 5.5° east of source
+    config.start_lat = 31.0f;    // 4.7° south of source
+    config.end_lat = 41.0f;      // 5.3° north of source
+    config.lat_step = 0.05f;     // ~5.5 km resolution
+    config.lon_step = 0.05f;     // ~5.5 km resolution
+
+    std::string config_path = "./input/ldm/mesh.conf";
+    std::ifstream file(config_path);
+
+    if (!file.is_open()) {
+        std::cout << Color::YELLOW << "[WARNING] " << Color::RESET
+                  << "mesh.conf not found, using default mesh configuration" << std::endl;
+        std::cout << "  Grid: " << config.start_lon << "°E to " << config.end_lon << "°E, "
+                  << config.start_lat << "°N to " << config.end_lat << "°N" << std::endl;
+        std::cout << "  Resolution: " << config.lon_step << "° × " << config.lat_step << "°" << std::endl;
+        return config;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Trim whitespace
+        line.erase(0, line.find_first_not_of(" \t"));
+        if (line.empty()) continue;
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+        // Skip comments
+        if (line[0] == '#') continue;
+
+        // Parse key = value format
+        size_t eq_pos = line.find('=');
+        if (eq_pos == std::string::npos) continue;
+
+        std::string key = line.substr(0, eq_pos);
+        std::string value = line.substr(eq_pos + 1);
+
+        // Trim key and value
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+
+        // Remove inline comments
+        size_t comment_pos = value.find('#');
+        if (comment_pos != std::string::npos) {
+            value = value.substr(0, comment_pos);
+            value.erase(value.find_last_not_of(" \t") + 1);
+        }
+
+        try {
+            if (key == "start_lat") config.start_lat = std::stof(value);
+            else if (key == "start_lon") config.start_lon = std::stof(value);
+            else if (key == "end_lat") config.end_lat = std::stof(value);
+            else if (key == "end_lon") config.end_lon = std::stof(value);
+            else if (key == "lat_step") config.lat_step = std::stof(value);
+            else if (key == "lon_step") config.lon_step = std::stof(value);
+        } catch (const std::exception& e) {
+            std::cerr << Color::RED << "[ERROR] " << Color::RESET
+                      << "Invalid value for '" << key << "': " << value << std::endl;
+            exit(1);
+        }
+    }
+
+    file.close();
+
+    // Calculate grid size and print info
+    int lon_count = static_cast<int>((config.end_lon - config.start_lon) / config.lon_step) + 1;
+    int lat_count = static_cast<int>((config.end_lat - config.start_lat) / config.lat_step) + 1;
+
+    std::cout << Color::GREEN << "[CONFIG] " << Color::RESET
+              << "Deposition mesh loaded from " << config_path << std::endl;
+    std::cout << "  Grid: " << config.start_lon << "°E to " << config.end_lon << "°E, "
+              << config.start_lat << "°N to " << config.end_lat << "°N" << std::endl;
+    std::cout << "  Resolution: " << config.lon_step << "° × " << config.lat_step << "°" << std::endl;
+    std::cout << "  Grid size: " << lon_count << " × " << lat_count << " = "
+              << (lon_count * lat_count) << " points" << std::endl;
+
+    return config;
+}

@@ -561,6 +561,7 @@ public:
     void allocateGPUMemory();
     void runSimulation();
     void runSimulation_eki();
+    void runSimulation_ldm();
     void runSimulation_eki_dump();
 
     void findBoundingBox();
@@ -600,6 +601,10 @@ public:
     void swapByteOrder(int& value);
     void outputParticlesBinaryMPI(int timestep);
     void outputParticlesBinaryMPI_ens(int timestep);
+    void outputDepositionVTK(const float* h_deposition, int mesh_nx, int mesh_ny,
+                             float start_lon, float start_lat,
+                             float lon_step, float lat_step,
+                             int timestep, bool isDry);
 
     // // Concentration tracking functions
     void log_first_particle_concentrations(int timestep, float currentTime);
@@ -676,7 +681,8 @@ struct GridConfig {
 };
 
 // Grid configuration loader (implemented in ldm.cu)
-GridConfig loadGridConfig();
+GridConfig loadGridConfig();      // For EKI receptor grid (from source.conf)
+GridConfig loadMeshConfig();      // For LDM deposition mesh (from mesh.conf)
 
 // MPI variables removed - using single process mode
 // g_mpi arrays now accessed with index 0 (PROCESS_INDEX)
