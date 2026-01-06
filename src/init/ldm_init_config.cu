@@ -18,6 +18,9 @@
 #include "../core/ldm.cuh"
 #include "../physics/ldm_nuclides.cuh"
 #include "colors.h"
+#include <ctime>
+#include <vector>
+#include <algorithm>
 
 /******************************************************************************
  * @brief Load simulation configuration from legacy setting.txt file
@@ -450,6 +453,268 @@ void LDM::loadReceptorConfig() {
     std::cout << "done\n";
 }
 
+/******************************************************************************
+ * @brief Parse YYYYMMDD-HH:MM datetime string to Unix timestamp
+ *
+ * @param datetime_str String in format "YYYYMMDD-HH:MM" (e.g., "20250112-14:30")
+ * @param config_filename Configuration file name for error messages
+ * @return Unix timestamp (seconds since epoch)
+ *
+ * @throws exit(1) if parsing fails or datetime is invalid
+ *****************************************************************************/
+static time_t parseDateTimeToTimestamp(const char* datetime_str, const char* config_filename) {
+    // Expected format: YYYYMMDD-HH:MM
+    if (strlen(datetime_str) != 14) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid datetime format: " << datetime_str << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    DateTime must be exactly 14 characters in format YYYYMMDD-HH:MM" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::GREEN << "Example:" << Color::RESET << std::endl;
+        std::cerr << "    20250112-14:30  (January 12, 2025, 14:30)" << std::endl;
+        std::cerr << "    20250101-00:00  (January 1, 2025, 00:00)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    // Check for hyphen at position 8 and colon at position 11
+    if (datetime_str[8] != '-') {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid datetime format: " << datetime_str << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Missing hyphen separator between date and time" << std::endl;
+        std::cerr << "    Expected format: YYYYMMDD-HH:MM" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::GREEN << "Example:" << Color::RESET << std::endl;
+        std::cerr << "    20250112-14:30  (not 202501121430)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    if (datetime_str[11] != ':') {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid datetime format: " << datetime_str << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Missing colon separator between hours and minutes" << std::endl;
+        std::cerr << "    Expected format: YYYYMMDD-HH:MM" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::GREEN << "Example:" << Color::RESET << std::endl;
+        std::cerr << "    20250112-14:30  (not 20250112-1430)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    // Parse components
+    int year, month, day, hour, minute;
+    if (sscanf(datetime_str, "%4d%2d%2d-%2d:%2d", &year, &month, &day, &hour, &minute) != 5) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Failed to parse datetime: " << datetime_str << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    DateTime string contains non-numeric characters or invalid format" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::GREEN << "Expected format:" << Color::RESET << std::endl;
+        std::cerr << "    YYYYMMDD-HH:MM where YYYYMMDD, HH, MM are digits" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    // Validate ranges
+    if (year < 1970 || year > 2100) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid year in datetime: " << year << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Year must be between 1970 and 2100" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Found in:" << Color::RESET << " " << datetime_str << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+    if (month < 1 || month > 12) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid month in datetime: " << month << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Month must be between 01 and 12" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Found in:" << Color::RESET << " " << datetime_str << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+    if (day < 1 || day > 31) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid day in datetime: " << day << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Day must be between 01 and 31" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Found in:" << Color::RESET << " " << datetime_str << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+    if (hour < 0 || hour > 23) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid hour in datetime: " << hour << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Hour must be between 00 and 23 (24-hour format)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Found in:" << Color::RESET << " " << datetime_str << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+    if (minute < 0 || minute > 59) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid minute in datetime: " << minute << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Minute must be between 00 and 59" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Found in:" << Color::RESET << " " << datetime_str << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    // Convert to timestamp using mktime
+    struct tm timeinfo = {};
+    timeinfo.tm_year = year - 1900;  // Years since 1900
+    timeinfo.tm_mon = month - 1;     // Months since January (0-11)
+    timeinfo.tm_mday = day;
+    timeinfo.tm_hour = hour;
+    timeinfo.tm_min = minute;
+    timeinfo.tm_sec = 0;
+    timeinfo.tm_isdst = -1;  // Auto-detect DST
+
+    time_t timestamp = mktime(&timeinfo);
+    if (timestamp == -1) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid date/time combination: " << datetime_str << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Date/time does not exist (e.g., Feb 30, invalid leap year)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    return timestamp;
+}
+
+/******************************************************************************
+ * @brief Interpolate emission time series to regular time grid
+ *
+ * @param input_times Vector of input timestamps (Unix time, seconds)
+ * @param input_emissions Vector of emission values (Bq)
+ * @param time_interval_seconds Time interval for output grid (seconds)
+ * @param simulation_duration Total simulation duration (seconds)
+ * @param config_filename Configuration file name for error messages
+ * @return Vector of interpolated emission values at regular intervals
+ *
+ * @details Uses linear interpolation between data points.
+ *          Values before first input are clamped to first value.
+ *          Values after last input are clamped to last value.
+ *
+ * @throws exit(1) if input data is invalid or inconsistent
+ *****************************************************************************/
+static std::vector<float> interpolateEmissions(
+    const std::vector<time_t>& input_times,
+    const std::vector<float>& input_emissions,
+    float time_interval_seconds,
+    float simulation_duration,
+    const char* config_filename
+) {
+    if (input_times.empty() || input_emissions.empty()) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "No datetime emission data provided" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    TRUE_EMISSION_SERIES with datetime mode requires at least one entry" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    if (input_times.size() != input_emissions.size()) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Mismatch between timestamps and emissions" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Number of datetimes (" << input_times.size()
+                  << ") != number of emissions (" << input_emissions.size() << ")" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    // Calculate number of output timesteps
+    int num_timesteps = (int)std::ceil(simulation_duration / time_interval_seconds);
+    if (num_timesteps <= 0) {
+        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                  << Color::RESET << "Invalid simulation duration or time interval" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+        std::cerr << "    Cannot generate time grid with given parameters" << std::endl;
+        std::cerr << "    Duration: " << simulation_duration << "s, Interval: " << time_interval_seconds << "s" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " simulation.conf or " << config_filename << std::endl;
+        std::cerr << std::endl;
+        exit(1);
+    }
+
+    std::vector<float> output_emissions(num_timesteps);
+    time_t start_time = input_times[0];  // Simulation starts at first input timestamp
+
+    // Interpolate for each output timestep
+    for (int i = 0; i < num_timesteps; i++) {
+        time_t current_time = start_time + (time_t)(i * time_interval_seconds);
+
+        // Find bounding input points
+        if (current_time <= input_times.front()) {
+            // Before first data point: use first value (clamp)
+            output_emissions[i] = input_emissions.front();
+        }
+        else if (current_time >= input_times.back()) {
+            // After last data point: use last value (clamp)
+            output_emissions[i] = input_emissions.back();
+        }
+        else {
+            // Find bracketing points and interpolate
+            for (size_t j = 0; j < input_times.size() - 1; j++) {
+                if (current_time >= input_times[j] && current_time <= input_times[j+1]) {
+                    // Linear interpolation
+                    double time_frac = (double)(current_time - input_times[j]) /
+                                      (double)(input_times[j+1] - input_times[j]);
+                    output_emissions[i] = input_emissions[j] +
+                                         time_frac * (input_emissions[j+1] - input_emissions[j]);
+                    break;
+                }
+            }
+        }
+    }
+
+    return output_emissions;
+}
+
 void LDM::loadEKISettings() {
     // Try modern config file first, fallback to legacy
     FILE* ekiFile = fopen("input/eki.conf", "r");
@@ -496,7 +761,12 @@ void LDM::loadEKISettings() {
     // State machine flags for multi-line section parsing
     bool reading_true_emissions = false;
     bool reading_prior_emissions = false;
-    
+
+    // DateTime mode detection for TRUE_EMISSION_SERIES
+    bool true_emissions_datetime_mode = false;
+    std::vector<time_t> true_emission_times;
+    std::vector<float> true_emission_values;
+
     while (fgets(buffer, sizeof(buffer), ekiFile)) {
         // Skip comments and empty lines
         if (buffer[0] == '#' || buffer[0] == '\n' || buffer[0] == '\r') {
@@ -505,9 +775,18 @@ void LDM::loadEKISettings() {
 
         // Normalize separator: convert ':' to '=' for uniform parsing
         // This allows both "KEY: value" (new format) and "KEY=value" (legacy format)
+        // BUT: Only convert if colon is followed by whitespace or newline (config key-value pairs)
+        // Do NOT convert datetime format colons (YYYYMMDD-HH:MM has colon followed by digit)
         char* colon_pos = strchr(buffer, ':');
         if (colon_pos && !strchr(buffer, '=')) {
-            *colon_pos = '=';
+            // Check what follows the colon
+            char after_colon = *(colon_pos + 1);
+            // Only convert if colon is followed by space, tab, newline, or end of string
+            // This preserves datetime format "HH:MM" where colon is followed by digit
+            if (after_colon == ' ' || after_colon == '\t' || after_colon == '\n' ||
+                after_colon == '\r' || after_colon == '\0') {
+                *colon_pos = '=';
+            }
         }
 
         // State machine: Check for multi-line section headers
@@ -523,17 +802,76 @@ void LDM::loadEKISettings() {
             continue;
         }
 
-        // Reset section flags when encountering key-value pairs
+        // Reset section flags when encountering key-value pairs (but not section headers)
+        // Section headers like "TRUE_EMISSION_SERIES:" have no value after '='
         if (strchr(buffer, '=') != nullptr) {
-            reading_true_emissions = false;
-            reading_prior_emissions = false;
+            // Check if this is a section header (no value after '=') or a key-value pair
+            char* equals_pos = strchr(buffer, '=');
+            char after_equals[256] = {0};  // Initialize to empty
+            int scanned = sscanf(equals_pos + 1, " %s", after_equals);  // Get first token after '='
+
+            // Only reset flags if there's a value after '=' (it's a key-value pair, not a section header)
+            if (scanned == 1 && strlen(after_equals) > 0 &&
+                !strstr(buffer, "TRUE_EMISSION_SERIES=") &&
+                !strstr(buffer, "PRIOR_EMISSION_SERIES=")) {
+                reading_true_emissions = false;
+                reading_prior_emissions = false;
+            }
         }
 
         // Parse matrix data based on current state
         if (reading_true_emissions) {
+            // Try to parse as datetime format first: YYYYMMDD-HH:MM emission_value
+            char datetime_str[32];
             float emission;
-            if (sscanf(buffer, "%f", &emission) == 1) {
-                g_eki.true_emissions.push_back(emission);
+
+            // Check if line contains datetime format (has hyphen at position 8 and colon at position 11)
+            char trimmed_buffer[256];
+            sscanf(buffer, " %s", trimmed_buffer);  // Trim leading whitespace
+
+            if (strlen(trimmed_buffer) >= 14 && trimmed_buffer[8] == '-' && trimmed_buffer[11] == ':') {
+                // DateTime mode detected
+                if (sscanf(buffer, "%s %f", datetime_str, &emission) == 2) {
+                    true_emissions_datetime_mode = true;
+                    time_t timestamp = parseDateTimeToTimestamp(datetime_str, config_filename);
+                    true_emission_times.push_back(timestamp);
+                    true_emission_values.push_back(emission);
+                }
+                else {
+                    std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                              << Color::RESET << "Invalid TRUE_EMISSION_SERIES datetime entry" << std::endl;
+                    std::cerr << std::endl;
+                    std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+                    std::cerr << "    Could not parse line: " << buffer;
+                    std::cerr << "  " << Color::GREEN << "Expected format:" << Color::RESET << std::endl;
+                    std::cerr << "    YYYYMMDD-HH:MM emission_value" << std::endl;
+                    std::cerr << std::endl;
+                    std::cerr << "  " << Color::GREEN << "Example:" << Color::RESET << std::endl;
+                    std::cerr << "    20250112-00:00 1.0e+12" << std::endl;
+                    std::cerr << "    20250112-00:30 5.0e+11" << std::endl;
+                    std::cerr << std::endl;
+                    std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+                    std::cerr << std::endl;
+                    exit(1);
+                }
+            }
+            else {
+                // Simple mode: just emission values
+                if (sscanf(buffer, "%f", &emission) == 1) {
+                    if (true_emissions_datetime_mode) {
+                        std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                                  << Color::RESET << "Mixed datetime and simple modes in TRUE_EMISSION_SERIES" << std::endl;
+                        std::cerr << std::endl;
+                        std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+                        std::cerr << "    Cannot mix datetime format (YYYYMMDD-HH:MM value) with simple values" << std::endl;
+                        std::cerr << "    All entries must use the same format" << std::endl;
+                        std::cerr << std::endl;
+                        std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+                        std::cerr << std::endl;
+                        exit(1);
+                    }
+                    g_eki.true_emissions.push_back(emission);
+                }
             }
         }
         else if (reading_prior_emissions) {
@@ -611,8 +949,115 @@ void LDM::loadEKISettings() {
             }
         }
     }
-    
+
     fclose(ekiFile);
+
+    // ===== POST-PROCESSING: DateTime mode interpolation =====
+    if (true_emissions_datetime_mode) {
+        // Validate that we have datetime entries
+        if (true_emission_times.empty()) {
+            std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                      << Color::RESET << "No datetime entries in TRUE_EMISSION_SERIES" << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+            std::cerr << "    DateTime mode detected but no valid entries found" << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+            std::cerr << std::endl;
+            exit(1);
+        }
+
+        // Check for chronological order
+        for (size_t i = 1; i < true_emission_times.size(); i++) {
+            if (true_emission_times[i] <= true_emission_times[i-1]) {
+                // Convert timestamps back to readable format for error message
+                struct tm tm1 = *localtime(&true_emission_times[i-1]);
+                struct tm tm2 = *localtime(&true_emission_times[i]);
+                char time_str1[32], time_str2[32];
+                strftime(time_str1, sizeof(time_str1), "%Y%m%d-%H:%M", &tm1);
+                strftime(time_str2, sizeof(time_str2), "%Y%m%d-%H:%M", &tm2);
+
+                std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                          << Color::RESET << "TRUE_EMISSION_SERIES timestamps not in chronological order" << std::endl;
+                std::cerr << std::endl;
+                std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+                std::cerr << "    Entry " << (i+1) << " (" << time_str2 << ") is not after entry "
+                          << i << " (" << time_str1 << ")" << std::endl;
+                std::cerr << std::endl;
+                std::cerr << "  " << Color::CYAN << "Required:" << Color::RESET << std::endl;
+                std::cerr << "    All datetime entries must be in ascending chronological order" << std::endl;
+                std::cerr << std::endl;
+                std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+                std::cerr << std::endl;
+                exit(1);
+            }
+        }
+
+        // Validate negative emissions
+        for (size_t i = 0; i < true_emission_values.size(); i++) {
+            if (true_emission_values[i] < 0.0f) {
+                struct tm tm_i = *localtime(&true_emission_times[i]);
+                char time_str[32];
+                strftime(time_str, sizeof(time_str), "%Y%m%d-%H:%M", &tm_i);
+
+                std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                          << Color::RESET << "Negative emission value in datetime mode" << std::endl;
+                std::cerr << std::endl;
+                std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+                std::cerr << "    Entry at " << time_str << " has negative value: "
+                          << true_emission_values[i] << " Bq" << std::endl;
+                std::cerr << std::endl;
+                std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+                std::cerr << std::endl;
+                exit(1);
+            }
+        }
+
+        // Convert time_interval to seconds
+        float time_interval_seconds = g_eki.time_interval;
+        if (g_eki.time_unit == "minutes") {
+            time_interval_seconds *= 60.0f;
+        } else if (g_eki.time_unit == "hours") {
+            time_interval_seconds *= 3600.0f;
+        } else if (g_eki.time_unit != "seconds") {
+            std::cerr << std::endl << Color::RED << Color::BOLD << "[INPUT ERROR] "
+                      << Color::RESET << "Invalid EKI_TIME_UNIT for datetime mode: " << g_eki.time_unit << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::YELLOW << "Problem:" << Color::RESET << std::endl;
+            std::cerr << "    Time unit must be 'seconds', 'minutes', or 'hours'" << std::endl;
+            std::cerr << std::endl;
+            std::cerr << "  " << Color::CYAN << "Fix in:" << Color::RESET << " " << config_filename << std::endl;
+            std::cerr << std::endl;
+            exit(1);
+        }
+
+        // Get simulation duration
+        float simulation_duration = time_end;
+
+        // Perform interpolation to generate regular time grid
+        g_eki.true_emissions = interpolateEmissions(
+            true_emission_times,
+            true_emission_values,
+            time_interval_seconds,
+            simulation_duration,
+            config_filename
+        );
+
+        // Print summary
+        struct tm tm_start = *localtime(&true_emission_times.front());
+        struct tm tm_end = *localtime(&true_emission_times.back());
+        char start_str[32], end_str[32];
+        strftime(start_str, sizeof(start_str), "%Y-%m-%d %H:%M", &tm_start);
+        strftime(end_str, sizeof(end_str), "%Y-%m-%d %H:%M", &tm_end);
+
+        std::cout << std::endl;
+        std::cout << Color::CYAN << "[INFO] " << Color::RESET
+                  << "TRUE_EMISSION_SERIES: DateTime mode" << std::endl;
+        std::cout << "  Input entries      : " << true_emission_times.size() << std::endl;
+        std::cout << "  Time range         : " << start_str << " to " << end_str << std::endl;
+        std::cout << "  Interpolated steps : " << g_eki.true_emissions.size() << std::endl;
+        std::cout << "  Time interval      : " << g_eki.time_interval << " " << g_eki.time_unit << std::endl;
+    }
 
     // ========== COMPREHENSIVE VALIDATION ==========
 

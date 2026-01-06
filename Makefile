@@ -76,7 +76,9 @@ IPC_SOURCES = \
 # Physics module sources (Agent 4)
 PHYSICS_SOURCES = \
     src/physics/ldm_cram2.cu \
-    src/physics/ldm_nuclides.cu
+    src/physics/ldm_nuclides.cu \
+    src/physics/ldm_dose_coefficients.cu \
+    src/physics/ldm_dose_calculation.cu
 
 # Debug module sources (Agent 4)
 DEBUG_SOURCES = \

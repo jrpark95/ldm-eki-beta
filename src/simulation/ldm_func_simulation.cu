@@ -50,6 +50,7 @@
 #include "../core/ldm.cuh"
 #include "ldm_func_simulation.cuh"
 #include "../debug/kernel_error_collector.cuh"
+#include "../physics/ldm_dose_calculation.cuh"
 #include "../colors.h"
 #include <unistd.h>  // for isatty()
 
@@ -774,7 +775,7 @@ void LDM::runSimulation_ldm(){
     float end_lon = mesh_config.end_lon;
     float lat_step = mesh_config.lat_step;
     float lon_step = mesh_config.lon_step;
-    
+
     int lat_num = static_cast<int>(round((end_lat - start_lat) / lat_step) + 1);
     int lon_num = static_cast<int>(round((end_lon - start_lon) / lon_step) + 1);
 
@@ -791,6 +792,26 @@ void LDM::runSimulation_ldm(){
 
     cudaMemset(d_dryDep, 0, meshSize);
     cudaMemset(d_wetDep, 0, meshSize);
+
+    // Initialize dose calculator
+    DoseCalculator doseCalc;
+    DoseResult doseResult;
+    bool doseCalcEnabled = false;
+
+    // Get nuclide name from configuration
+    NuclideConfig* nucConfig = NuclideConfig::getInstance();
+    std::string nuclideName = std::string(nucConfig->getNuclideName(0));  // Use first nuclide from config
+
+    // Try to initialize dose calculator
+    if (doseCalc.initialize(nuclideName, lon_num, lat_num,
+                            start_lon, start_lat, lon_step, lat_step,
+                            dt / 3600.0f)) {  // Convert dt from seconds to hours
+        doseResult.initialize(lon_num, lat_num, start_lon, start_lat, lon_step, lat_step);
+        doseCalcEnabled = true;
+        std::cout << "[INFO] Dose calculation enabled for " << nuclideName << std::endl;
+    } else {
+        std::cerr << "[WARNING] Dose calculation disabled - could not initialize" << std::endl;
+    }
 
     // EKI mode: Check meteorological data preloading
     if (!g_eki_meteo.is_initialized) {
@@ -1114,9 +1135,47 @@ void LDM::runSimulation_ldm(){
             {
                 std::vector<float> h_dryDep(mesh.lat_count * mesh.lon_count);
                 std::vector<float> h_wetDep(mesh.lat_count * mesh.lon_count);
+                std::vector<float> h_concentration(mesh.lat_count * mesh.lon_count, 0.0f);
 
                 cudaMemcpy(h_dryDep.data(), d_dryDep, meshSize, cudaMemcpyDeviceToHost);
                 cudaMemcpy(h_wetDep.data(), d_wetDep, meshSize, cudaMemcpyDeviceToHost);
+
+                // Calculate concentration grid from particles (CPU-side accumulation)
+                // Copy particles from GPU and bin to grid
+                cudaMemcpy(h_part.data(), d_part, h_part.size() * sizeof(LDMpart), cudaMemcpyDeviceToHost);
+
+                // Accumulate particle concentrations to grid
+                // Grid cell volume for concentration calculation
+                // Cell area = (lon_step * 111km * cos(lat)) * (lat_step * 111km)
+                // Assume average height layer of 100m for ground-level concentration
+                float avg_lat_rad = (start_lat + (lat_num / 2.0f) * lat_step) * 3.14159f / 180.0f;
+                float cell_area = lon_step * 111000.0f * cosf(avg_lat_rad) * lat_step * 111000.0f;  // m²
+                float cell_height = 100.0f;  // m (ground layer height)
+                float cell_volume = cell_area * cell_height;  // m³
+
+                for (size_t p = 0; p < h_part.size(); p++) {
+                    if (!h_part[p].flag) continue;  // Skip inactive particles
+
+                    // Convert particle position to grid indices
+                    // Particle x,y are in GFS grid coordinates (0.5° resolution)
+                    float part_lon = h_part[p].x * 0.5f - 179.0f;
+                    float part_lat = h_part[p].y * 0.5f - 90.0f;
+                    float part_z = h_part[p].z;
+
+                    // Only count particles in ground layer (below cell_height)
+                    if (part_z > cell_height) continue;
+
+                    // Calculate grid indices
+                    int ix = static_cast<int>((part_lon - start_lon) / lon_step);
+                    int jy = static_cast<int>((part_lat - start_lat) / lat_step);
+
+                    // Bounds check
+                    if (ix >= 0 && ix < lon_num && jy >= 0 && jy < lat_num) {
+                        int grid_idx = jy * lon_num + ix;
+                        // Accumulate concentration [Bq/m³] = particle_activity [Bq] / cell_volume [m³]
+                        h_concentration[grid_idx] += h_part[p].conc / cell_volume;
+                    }
+                }
 
                 outputDepositionVTK(h_dryDep.data(), mesh.lon_count, mesh.lat_count,
                                     start_lon, start_lat, lon_step, lat_step,
@@ -1124,6 +1183,24 @@ void LDM::runSimulation_ldm(){
                 outputDepositionVTK(h_wetDep.data(), mesh.lon_count, mesh.lat_count,
                                     start_lon, start_lat, lon_step, lat_step,
                                     timestep, false);  // Wet deposition
+
+                // Calculate radiation doses if enabled
+                if (doseCalcEnabled) {
+                    // Reset hourly dose grids
+                    doseResult.resetHourly();
+
+                    // Calculate each dose pathway
+                    doseCalc.calculateCloudshine(h_concentration.data(), doseResult);
+                    doseCalc.calculateGroundshine(h_dryDep.data(), h_wetDep.data(), doseResult);
+                    doseCalc.calculateInhalation(h_concentration.data(), doseResult);
+                    doseCalc.calculateTotal(doseResult);
+
+                    // Accumulate to integrated doses
+                    doseCalc.accumulateDoses(doseResult);
+
+                    // Output dose VTK files
+                    doseCalc.outputAllDosesVTK(doseResult, "output/dose", timestep);
+                }
             }
 
             // // Log concentration data for analysis

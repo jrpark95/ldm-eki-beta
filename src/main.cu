@@ -21,6 +21,7 @@
 
 #include "core/ldm.cuh"
 #include "physics/ldm_nuclides.cuh"
+#include "physics/ldm_dose_coefficients.cuh"
 
 // Standard library includes
 #include <iostream>
@@ -72,6 +73,18 @@ std::ofstream* g_log_file = nullptr;
  * @date 2025
  *****************************************************************************/
 int main(int argc, char** argv) {
+
+    // ===========================================================================
+    // Dose Coefficient Loading (for radiation dose calculation)
+    // ===========================================================================
+    std::cout << "\n[INFO] Loading dose coefficients..." << std::endl;
+    DoseCoefficients* doseCoeff = DoseCoefficients::getInstance();
+    if (!doseCoeff->loadAllData("./input/model1/")) {
+        std::cerr << Color::RED << "[ERROR] " << Color::RESET
+                  << "Failed to load dose coefficients" << std::endl;
+        return 1;
+    }
+    doseCoeff->printSummary();
 
     // ===========================================================================
     // Nuclide Configuration Loading
